@@ -1,0 +1,19 @@
+[package]
+name = "tpt-hyle"
+description = "Sync-native, append-only micro key-value store (State + Sync segments)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+serde = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true, optional = true }

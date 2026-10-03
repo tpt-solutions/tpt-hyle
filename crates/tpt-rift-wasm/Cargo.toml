@@ -1,0 +1,17 @@
+[package]
+name = "tpt-rift-wasm"
+description = "WebAssembly bindings for tpt-hyle-rift (IndexedDB backing store)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tpt-hyle-rift = { workspace = true }
+wasm-bindgen = "0.2"
+web-sys = "0.3"

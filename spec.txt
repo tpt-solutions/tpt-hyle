@@ -1,0 +1,296 @@
+RFC 003: tpt-hyle (The Unified Sync-Native Storage Primitive)
+Status: Active Design / Core Infrastructure
+Version: 0.2.0 (Workspace Architecture)
+Domain: Edge Computing, Offline-First Applications, Local AI Memory, Distributed Systems
+Ecosystem: tpt-solutions (Umbrella), tpt-archon (Execution), tpt-telos (Verification)
+1. Abstract
+tpt-hyle is a unified, pure-Rust, no_std storage and replication workspace. It abandons the legacy paradigm of wrapping a heavy relational database (like SQLite) with brittle, external sync triggers. Instead, it introduces a Sync-Native Micro-Store (the `tpt-hyle` core crate) where the storage architecture and the replication feed are mathematically unified at the disk level. This is paired with tpt-rift, a lightweight, Conflict-free Replicated Data Type (CRDT) engine that consumes the storage feed to provide seamless, offline-first, peer-to-peer or client-server synchronization.
+The project is organized as a Rust workspace containing multiple specialized crates, allowing users to depend on only the components they need while maintaining a unified development and testing environment.
+2. Motivation & Core Problems
+The current offline-first ecosystem relies on a flawed architectural pattern:
+The SQLite Tax: SQLite is a C-based, general-purpose RDBMS. Using it in Rust requires FFI (Foreign Function Interface), breaking no_std compatibility, inflating binary sizes, and making it impossible to run in WASM or bare-metal IoT environments.
+The "Change-Tracking" Bottleneck: SQLite only stores state. To sync it, developers must build complex secondary layers (shadow tables, triggers, or Write-Ahead Log parsers) just to figure out what changed. This is slow, prone to race conditions, and a nightmare to formally verify.
+Fragmented Tooling: Developers are forced to stitch together a local database (e.g., SQLite/Realm) and a separate sync engine (e.g., Automerge/RxDB), resulting in duplicated state, high memory overhead, and complex conflict resolution.
+3. Core Design Principles
+Sync-Native Storage: The database log is the sync feed. There is no separate change-tracking layer.
+Pure Rust & no_std: Zero C dependencies. The core path requires zero heap allocation (no_alloc), allowing it to run in WebAssembly, iOS, Android, and microcontrollers.
+Mathematical Safety: The core allocator and log boundaries are designed for formal verification (via tpt-telos/Kani), guaranteeing no buffer overflows or panics on corrupted disk states.
+Modular Architecture: The workspace is split into focused crates, allowing users to depend on only what they need (storage only, sync only, or the unified API).
+Document/Key-Value First: We sacrifice complex relational SQL joins to achieve extreme speed, tiny footprint, and trivial CRDT integration.
+4. Workspace Architecture
+4.1 Crate Organization
+The tpt-hyle project is organized as a Rust workspace with the following structure:
+
+tpt-hyle/
+├── Cargo.toml                    # Workspace root
+├── README.md
+│
+├── crates/
+│   ├── tpt-hyle/                 # Core storage engine
+│   ├── tpt-rift/                 # Sync engine
+│   ├── tpt-hyle-rift/            # Unified API (combines both)
+│   ├── tpt-rift-server/          # Reference server implementation
+│   ├── tpt-hyle-cli/             # Debugging/inspection CLI
+│   ├── tpt-rift-wasm/            # WebAssembly bindings
+│   ├── tpt-rift-transport-ws/    # WebSocket transport
+│   ├── tpt-rift-transport-webrtc/ # WebRTC transport
+│   └── tpt-hyle-test-utils/      # Testing utilities
+│
+└── examples/                     # Usage examples
+
+4.2 Crate Responsibilities
+Core Crates
+tpt-hyle - The Micro-Store
+Pure Rust, no_std, append-only storage engine
+Dual-segment architecture (State + Sync segments)
+Zero-allocation core path
+Formally verifiable allocator and log boundaries
+Dependencies: serde, sha2, thiserror
+tpt-rift - The Sync Engine
+CRDT resolution engine (LWW-ES, JSON CRDT)
+Reads directly from tpt-hyle's Sync Segment
+Transport-agnostic (exposes Transport trait)
+Dependencies: tpt-hyle, serde, async-trait
+tpt-hyle-rift - The Unified API
+High-level API that combines tpt-hyle + tpt-rift
+Simple open() and connect() functions
+Handles background sync loop automatically
+This is what 90% of users will depend on
+Dependencies: tpt-hyle, tpt-rift, tokio
+Server & CLI
+tpt-rift-server - Reference Server
+Self-hostable sync server (WebSocket endpoint)
+Stores data in tpt-hyle on the server side
+Handles multi-client sync, authentication, and access control
+Dependencies: tpt-hyle, tpt-rift, tokio, axum
+tpt-hyle-cli - Debugging Tool
+Command-line tool to inspect tpt-hyle databases
+Commands: inspect, dump-sync-log, compact, verify
+Essential for debugging and development
+Dependencies: tpt-hyle, clap, serde_json
+Transport Layers
+tpt-rift-transport-ws - WebSocket Transport
+Implements tpt-rift::Transport trait for WebSockets
+Client and server implementations
+Dependencies: tpt-rift, tokio-tungstenite
+tpt-rift-transport-webrtc - WebRTC Transport
+Implements tpt-rift::Transport trait for peer-to-peer WebRTC
+For browser-to-browser or mobile-to-mobile sync
+Dependencies: tpt-rift, webrtc
+Platform Bindings
+tpt-rift-wasm - WebAssembly Bindings
+Compiles tpt-hyle + tpt-rift to WebAssembly
+Uses IndexedDB as the backing store for tpt-hyle in browsers
+Exposes JavaScript-friendly API
+Dependencies: tpt-hyle-rift, wasm-bindgen, web-sys
+Testing
+tpt-hyle-test-utils - Testing Utilities
+In-memory tpt-hyle implementation for fast unit tests
+Mock transports for testing tpt-rift
+Property-based testing generators (for proptest)
+Dependencies: tpt-hyle, tpt-rift, proptest
+4.3 Workspace Cargo.toml
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/tpt-hyle",
+    "crates/tpt-rift",
+    "crates/tpt-hyle-rift",
+    "crates/tpt-rift-server",
+    "crates/tpt-hyle-cli",
+    "crates/tpt-rift-wasm",
+    "crates/tpt-rift-transport-ws",
+    "crates/tpt-rift-transport-webrtc",
+    "crates/tpt-hyle-test-utils",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/tpt-hyle"
+
+[workspace.dependencies]
+# Shared dependencies across all crates
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+
+# Crypto (for vector clocks, hashing)
+sha2 = "0.10"
+rand = "0.8"
+
+# Internal crate dependencies
+tpt-hyle = { path = "crates/tpt-hyle", version = "0.1.0" }
+tpt-rift = { path = "crates/tpt-rift", version = "0.1.0" }
+
+5. Architecture Part 1: tpt-hyle (The Micro-Store)
+tpt-hyle (Greek: ὕλη, "matter/substance") is the foundational storage engine. It replaces the SQLite B-Tree with a highly optimized, append-only Log-Structured architecture.
+5.1 The Dual-Segment Architecture
+Instead of a single data file and a separate Write-Ahead Log (WAL), tpt-hyle utilizes two tightly coupled, append-only segments on disk:
+The State Segment: Stores the actual Key-Value payloads (or JSON documents).
+The Sync Segment: A lightweight, sequential log of ChangeEvents.
+5.2 The "Sync-Native" Innovation
+When an application calls hyle.put(key, value), the engine executes a single, atomic append operation:
+It writes the value to the State Segment.
+It simultaneously writes a ChangeEvent to the Sync Segment.
+The ChangeEvent Structure:
+
+struct ChangeEvent {
+    key_hash: u64,          // Fast lookup hash of the key
+    vector_clock: u64,      // Monotonic Lamport timestamp / Vector clock
+    payload_offset: u64,    // Pointer to the data in the State Segment
+    payload_len: u32,       // Length of the data
+    tombstone: bool,        // True if this is a deletion
+}
+
+Why this is revolutionary: When tpt-rift needs to sync, it doesn't query the database. It simply reads the Sync Segment sequentially from the last known offset. It is a blazing-fast, zero-lock, sequential I/O operation.
+5.3 Compaction (Garbage Collection)
+Because it is append-only, the State Segment will eventually contain outdated versions of keys. tpt-hyle runs a background, low-priority compaction process that rewrites the State Segment to only contain the latest values, and truncates the Sync Segment accordingly.
+6. Architecture Part 2: tpt-rift (The Sync Engine)
+tpt-rift is the replication layer that reads from tpt-hyle's Sync Segment and resolves conflicts across devices.
+6.1 CRDT Implementation
+tpt-rift utilizes a Last-Writer-Wins Element-Set (LWW-ES) or a lightweight JSON CRDT (depending on the payload type).
+Because every ChangeEvent in tpt-hyle already contains a vector_clock, tpt-rift doesn't need to calculate causality from scratch. The storage layer has already done the heavy lifting.
+Conflicts are resolved deterministically using the vector clock, falling back to a deterministic hash of the key if clocks are identical.
+6.2 Transport Agnosticism
+tpt-rift does not care how data moves. It exposes a Transport trait:
+
+#[async_trait]
+pub trait Transport: Send + Sync {
+    async fn send(&self, delta: Vec<ChangeEvent>) -> Result<()>;
+    async fn receive(&self) -> Result<Vec<ChangeEvent>>;
+    async fn connect(&self) -> Result<()>;
+    async fn disconnect(&self) -> Result<()>;
+}
+
+Client-Server: Implement the trait using WebSockets (tpt-rift-transport-ws) or HTTP/3.
+Peer-to-Peer: Implement the trait using WebRTC (tpt-rift-transport-webrtc) or local Bluetooth/Wi-Fi Direct.
+6.3 The Sync Loop
+tpt-rift wakes up (triggered by network availability or a timer).
+It asks tpt-hyle for the current Sync Segment offset.
+It reads the delta (new ChangeEvents) sequentially.
+It serializes the delta and sends it to the peer/server via the Transport.
+It receives the peer's delta, applies the CRDT resolution math, and writes the winning state back into tpt-hyle (which automatically generates new ChangeEvents for the local store).
+7. The Unified Developer Experience
+The developer does not write SQL. They do not write sync triggers. They interact with a single, unified API via tpt-hyle-rift.
+7.1 Basic Usage
+
+use tpt_hyle_rift::{open, connect};
+use tpt_rift_transport_ws::WebSocketTransport;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Initialize the unified store (Pure Rust, no C FFI)
+    let store = open("app_data.db")?;
+    
+    // 2. Connect to sync server (or peer)
+    let transport = WebSocketTransport::new("wss://api.myapp.com/sync")?;
+    let sync = connect(&store, transport)?;
+
+    // 3. Write data locally (Instantaneous, works offline)
+    // This automatically updates the State Segment AND the Sync Segment.
+    store.put_json("user:101", &serde_json::json!({
+        "name": "Alice",
+        "status": "offline",
+        "local_ai_context": [1, 2, 3]
+    }))?;
+
+    // 4. Read data locally (Zero-copy where possible)
+    let user = store.get_json("user:101")?;
+    println!("User: {:?}", user);
+
+    // 5. Sync happens automatically in the background.
+    // When the network returns, `tpt-rift` reads the Sync Segment 
+    // and pushes the delta to the server. No developer code required.
+    sync.resume().await?; 
+    
+    Ok(())
+}
+
+7.2 Advanced Usage (Custom Transport)
+
+use tpt_hyle::HyleStore;
+use tpt_rift::{RiftSync, Transport};
+
+// User implements their own Transport trait
+struct MyCustomTransport { /* ... */ }
+
+#[async_trait]
+impl Transport for MyCustomTransport {
+    async fn send(&self, delta: Vec<ChangeEvent>) -> Result<()> {
+        // Custom send logic (e.g., Bluetooth, UDP, etc.)
+        Ok(())
+    }
+    
+    async fn receive(&self) -> Result<Vec<ChangeEvent>> {
+        // Custom receive logic
+        Ok(vec![])
+    }
+    
+    // ... other trait methods
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = HyleStore::open("app_data.db")?;
+    let transport = MyCustomTransport::new()?;
+    let sync = RiftSync::connect(&store, transport)?;
+    
+    // Use the store and sync as normal
+    Ok(())
+}
+
+8. Formal Verification Strategy (tpt-telos)
+Because this system handles critical local state, it cannot rely solely on unit tests. The core of tpt-hyle will be subjected to formal verification using Kani or Prusti.
+Allocator Proofs: Mathematically prove that the memory-mapped file pointers can never result in an out-of-bounds read/write, even if the underlying file is truncated or corrupted.
+Log Boundary Proofs: Prove that the Sync Segment and State Segment offsets can never desynchronize or cause a panic during a compaction cycle.
+CRDT Determinism: Prove that the conflict resolution logic in tpt-rift always produces the same result regardless of the order in which deltas are applied.
+9. Ecosystem Integration
+tpt-aion (The Eternal Container): tpt-hyle can be used as the underlying storage engine for tpt-aion files, allowing massive, provenance-heavy files to be synced incrementally across devices without re-downloading the whole payload.
+tpt-archon (The Microkernel): tpt-rift can run as a capability-based background daemon, allowing multiple isolated apps to sync their local tpt-hyle stores through a single, secure network socket.
+Local AI (tpt-mnemosyne): Provides the persistent, syncable vector/memory store for local AI agents, allowing an AI's memory to seamlessly sync between a user's phone and laptop.
+10. The 5-Year Implementation Roadmap
+Phase 1: Year 1 - tpt-hyle Core (The Safe Micro-Store)
+Crates: tpt-hyle, tpt-hyle-cli, tpt-hyle-test-utils
+Build the pure Rust, no_std, no_alloc append-only storage engine.
+Implement the dual-segment architecture (State + Sync).
+Write the background compaction logic.
+Build the CLI tool for debugging and inspection.
+Create in-memory test utilities for fast unit testing.
+Milestone: tpt-hyle passes all stress tests for data integrity and is 10x faster than SQLite for pure KV write workloads.
+Phase 2: Year 2 - tpt-rift & The Sync-Native Loop
+Crates: tpt-rift, tpt-hyle-rift
+Build the CRDT resolution engine (LWW-ES and basic JSON CRDT).
+Connect tpt-rift to read directly from tpt-hyle's Sync Segment.
+Build the unified API (tpt-hyle-rift) that combines storage + sync.
+Test with in-memory mock transports.
+Milestone: A working demo of two local instances syncing state seamlessly, even when writes occur while disconnected.
+Phase 3: Year 3 - Client-Server Sync
+Crates: tpt-rift-transport-ws, tpt-rift-server
+Implement WebSocket transport for client-server sync.
+Build the reference sync server using tpt-hyle for server-side storage.
+Add authentication, access control, and multi-client handling.
+Milestone: A fully working offline-first app that syncs to a self-hostable server.
+Phase 4: Year 4 - Peer-to-Peer & Edge Expansion
+Crates: tpt-rift-transport-webrtc, tpt-rift-wasm
+Implement WebRTC transport for browser-to-browser sync.
+Implement local network discovery (mDNS/UDP broadcast) for LAN sync.
+Compile the core to WebAssembly (WASM) for use in web browsers (using IndexedDB as the backing store for tpt-hyle).
+Begin formal verification of the core tpt-hyle allocator and log boundaries.
+Milestone: A fully offline-capable web app that syncs peer-to-peer without a central server.
+Phase 5: Year 5 - Mobile SDKs & Ecosystem Dominance
+Achieve 100% formal verification coverage on the core parser.
+Publish the mathematical proofs alongside the open-source code.
+Release drop-in SDKs for Swift (iOS) and Kotlin (Android) wrapping the Rust core.
+Implement advanced nested JSON CRDTs (allowing two users to edit the same JSON object simultaneously without conflict).
+Establish the hyle/rift standard as the premier open-source alternative to proprietary offline-first databases (like Firebase or Supabase local clients).
+11. Limitations and Trade-offs
+No Relational Joins: tpt-hyle is a Key-Value / Document store. If an application requires complex JOIN operations across 10 tables, this is the wrong tool. (Though, for 95% of edge/mobile apps, KV/Document is sufficient).
+Eventual Consistency: By design, this system provides eventual consistency, not strong consistency. If two users edit the same record offline, one will overwrite the other based on the CRDT clock. It is not suitable for financial ledgers requiring strict serializability.
+Disk Space Overhead: The append-only nature means the database file will grow larger than a strictly optimized B-Tree until the compaction process runs.
+Workspace Complexity: The multi-crate structure adds some overhead to dependency management and CI/CD, though this is offset by the flexibility and modularity it provides.

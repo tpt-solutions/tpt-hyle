@@ -1,0 +1,14 @@
+[package]
+name = "tpt-hyle-test-utils"
+description = "In-memory store, mock transports and proptest generators for the tpt-hyle workspace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-hyle = { workspace = true, features = ["std"] }
+tpt-rift = { workspace = true }
+proptest = { workspace = true }

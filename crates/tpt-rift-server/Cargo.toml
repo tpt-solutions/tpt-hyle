@@ -1,0 +1,15 @@
+[package]
+name = "tpt-rift-server"
+description = "Self-hostable reference sync server for tpt-rift"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-hyle = { workspace = true, features = ["std"] }
+tpt-rift = { workspace = true }
+tokio = { workspace = true }
+axum = "0.7"

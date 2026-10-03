@@ -1,0 +1,13 @@
+[package]
+name = "tpt-rift-transport-webrtc"
+description = "WebRTC peer-to-peer transport for tpt-rift"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-rift = { workspace = true }
+webrtc = "0.11"

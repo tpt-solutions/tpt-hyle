@@ -1,0 +1,14 @@
+[package]
+name = "tpt-rift"
+description = "CRDT sync engine that replicates directly from the tpt-hyle Sync Segment"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-hyle = { workspace = true, features = ["std"] }
+serde = { workspace = true }
+async-trait = { workspace = true }

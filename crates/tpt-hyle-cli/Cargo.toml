@@ -1,0 +1,14 @@
+[package]
+name = "tpt-hyle-cli"
+description = "CLI to inspect, dump, compact and verify tpt-hyle databases"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-hyle = { workspace = true, features = ["std"] }
+clap = { version = "4", features = ["derive"] }
+serde_json = { workspace = true }
