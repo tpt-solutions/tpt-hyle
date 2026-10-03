@@ -3,7 +3,7 @@
 **A sync-native storage primitive for offline-first apps.** By [TPT Solutions](https://github.com/tpt-solutions).
 
 `tpt-hyle` is a pure-Rust, append-only key-value/document store whose write log *is* the replication feed.
-`tpt-rift` is a CRDT sync engine that reads that feed directly. No SQLite, no shadow tables, no triggers.
+`tpt-rift` is a CRDT sync engine that reads that feed directly. No SQLite, no shadow tables, no triggers..
 
 > Status: **pre-alpha scaffold.** Nothing is implemented yet. See [TODO.md](TODO.md) and [spec.txt](spec.txt) (RFC 003).
 
