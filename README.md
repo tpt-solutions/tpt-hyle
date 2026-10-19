@@ -3,9 +3,9 @@
 **A sync-native storage primitive for offline-first apps.** By [TPT Solutions](https://github.com/tpt-solutions).
 
 `tpt-hyle` is a pure-Rust, append-only key-value/document store whose write log *is* the replication feed.
-`tpt-rift` is a CRDT sync engine that reads that feed directly. No SQLite, no shadow tables, no triggers..
+`tpt-rift` is a CRDT sync engine that reads that feed directly. No SQLite, no shadow tables, no triggers.
 
-> Status: **pre-alpha scaffold.** Nothing is implemented yet. See [TODO.md](TODO.md) and [spec.txt](spec.txt) (RFC 003).
+> Status: **Phase 1 core in progress.** The storage engine (`put`, `get`, `delete`, sync cursors, crash recovery) works and is tested. Compaction, sync, and the network layers are not built yet. See [TODO.md](TODO.md) and [spec.txt](spec.txt) (RFC 003).
 
 ## Crates
 
@@ -15,11 +15,17 @@
 | `tpt-rift` | CRDT sync engine, `Transport` trait |
 | `tpt-hyle-rift` | Unified API: `open()` / `connect()` |
 | `tpt-rift-server` | Self-hostable reference sync server |
-| `tpt-hyle-cli` | Inspect / dump-sync-log / compact / verify |
+| `tpt-hyle-cli` | Inspect / dump-sync-log / verify (compact pending) |
 | `tpt-rift-transport-ws` | WebSocket transport |
 | `tpt-rift-transport-webrtc` | WebRTC peer-to-peer transport |
 | `tpt-rift-wasm` | WebAssembly bindings (IndexedDB backing) |
-| `tpt-hyle-test-utils` | In-memory store, mock transports, proptest generators |
+| `tpt-hyle-test-utils` | In-memory store, model-checking ops, proptest strategies |
+
+## Documentation
+
+- [docs/format.md](docs/format.md): on-disk format
+- [docs/adr/](docs/adr/): architecture decision records
+- [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 

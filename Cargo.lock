@@ -2241,8 +2241,7 @@ name = "tpt-hyle"
 version = "0.1.0"
 dependencies = [
  "serde",
- "sha2",
- "thiserror",
+ "serde_json",
 ]
 
 [[package]]
@@ -2277,7 +2276,7 @@ name = "tpt-rift"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "serde",
+ "tokio",
  "tpt-hyle",
 ]
 
@@ -2303,8 +2302,11 @@ dependencies = [
 name = "tpt-rift-transport-ws"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "futures-util",
  "tokio",
  "tokio-tungstenite",
+ "tpt-hyle",
  "tpt-rift",
 ]
 

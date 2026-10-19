@@ -1,11 +1,12 @@
 # tpt-hyle TODO
 
 Source of truth for design: [spec.txt](spec.txt) (RFC 003). Tick items as they land.
+On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](docs/adr/).
 
 ## Decisions made (deviations from spec)
 
 - [x] License: `MIT OR Apache-2.0`, copyright TPT Solutions
-- [x] `tpt-hyle` uses layered features: bare `no_std`/no-alloc core -> `alloc` (serde/JSON) -> `std` (file/mmap backends)
+- [x] `tpt-hyle` uses layered features: bare `no_std`/no-alloc core -> `alloc` (in-memory storage, compaction) -> `std` (file backend). JSON helpers sit behind a separate `json` feature, so `alloc` stays dependency-free
 - [x] `ChangeEvent`: replace single `vector_clock: u64` with `lamport: u64` + `node_id`; conflict order = `(lamport, node_id)`. (The spec's key-hash tie-break gives both peers the same input, so it can't separate them.)
 - [x] MSRV 1.75, edition 2021
 - [x] Repo: `github.com/tpt-solutions/tpt-hyle`
@@ -15,58 +16,63 @@ Source of truth for design: [spec.txt](spec.txt) (RFC 003). Tick items as they l
 - [x] Cargo workspace with 9 crates (compiles)
 - [x] `LICENSE-MIT`, `LICENSE-APACHE`, README, .gitignore
 - [x] CI workflow (fmt, clippy, test, no_std target, MSRV)
-- [ ] `git init`, create GitHub repo, push
-- [ ] Add `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`
-- [ ] Add `rustfmt.toml`, `clippy.toml`, `deny.toml` (cargo-deny: licenses + advisories)
-- [ ] Set up `cargo-fuzz` / `cargo-kani` directories
-- [ ] Per-crate README + crates.io metadata (keywords, categories)
-- [ ] Reserve crate names on crates.io
-- [ ] Decide `node_id` width (u64 vs 128-bit) and write ADR in `docs/`
-- [ ] Write on-disk format spec in `docs/format.md` (magic, version, endianness, checksums)
-- [ ] Finalize `ChangeEvent` layout (add key length/ref, checksum, node_id)
+- [ ] `git init`, create GitHub repo, push (local repo already exists; remote creation and push not done)
+- [x] Add `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`
+- [x] Add `rustfmt.toml`, `clippy.toml`, `deny.toml` (cargo-deny: licenses, bans and sources pass; advisories not checked, needs network)
+- [x] Set up `cargo-fuzz` / `cargo-kani` directories (`fuzz/` target is written but not built: needs nightly and libFuzzer; `kani/` is a README only)
+- [x] Per-crate README + crates.io metadata
+- [ ] Reserve crate names on crates.io (requires publishing, not done)
+- [x] Decide `node_id` width (u128) and write ADR ([ADR 0001](docs/adr/0001-node-id-width.md))
+- [x] Write on-disk format spec in `docs/format.md` (magic, version, endianness, checksums)
+- [x] Finalize `ChangeEvent` layout (key length, node_id, CRC, flags; 56-byte record)
 
 ## Phase 1: tpt-hyle core (Year 1)
 
-- [ ] `Storage` trait (byte-region abstraction: read/write/append/flush/len) so core has no file I/O
-- [ ] In-memory fixed-buffer backend (no_alloc)
-- [ ] File backend (`std`), optional mmap backend
-- [ ] Segment headers + magic/version + per-record CRC / SHA-256
-- [ ] State Segment append (key + value records)
-- [ ] Sync Segment append (`ChangeEvent`), fixed-size records
-- [ ] Atomic dual-append with crash recovery (torn-write detection, replay on open)
-- [ ] `put` / `get` / `delete` (tombstones)
-- [ ] Key index (hash -> offset); decide fixed-size table vs rebuild-on-open for no_alloc
-- [ ] Hash-collision handling for `key_hash: u64` (store/compare full key)
-- [ ] Sequential Sync Segment reader from offset (`read_since`)
-- [ ] Lamport clock + node_id management
-- [ ] Compaction: rewrite State, truncate Sync, crash-safe swap
-- [ ] Define what compaction means for peers behind the truncation point (snapshot/resync protocol)
-- [ ] `alloc` feature: JSON helpers (`put_json` / `get_json`), serde
-- [ ] Error type (`thiserror` under `std`, hand-rolled in core)
-- [ ] `tpt-hyle-test-utils`: in-memory store, proptest generators
-- [ ] `tpt-hyle-cli`: `inspect`, `dump-sync-log`, `compact`, `verify`
-- [ ] Corruption tests: truncated/flipped-bit files never panic
-- [ ] Stress + property tests for integrity
-- [ ] Benchmarks vs SQLite (KV write workload); target 10x
-- [ ] CI builds core on `thumbv7em-none-eabihf` and `wasm32-unknown-unknown`
+- [x] `Storage` trait (append/read/truncate/flush/len; no `write_at`, since the engine is append-only)
+- [x] In-memory fixed-buffer backend (no_alloc): `FixedStorage<N>`
+- [x] File backend (`std`): `FileStorage`, `Hyle::open_file`
+- [ ] Optional mmap backend (blocked: needs `unsafe`, and the crate forbids it. Revisit if benchmarks need it)
+- [x] Segment headers + magic/version + per-record CRC-32C (SHA-256 not used, see [ADR 0002](docs/adr/0002-integrity-and-indexing.md))
+- [x] State Segment append (key + value records)
+- [x] Sync Segment append (`ChangeEvent`), fixed-size records
+- [x] Atomic dual-append with crash recovery (torn-tail truncation, orphan state removal, mid-log corruption refused)
+- [x] Batched commits with commit-marker records: a batch is durable only when its commit record is. Recovery drops an uncommitted tail whole and refuses damage in committed data ([ADR 0005](docs/adr/0005-batched-commits.md))
+- [x] Batch rollback: dropping an uncommitted batch truncates both segments back to where it started
+- [x] `put` / `get` / `delete` (tombstones)
+- [ ] Key index (hash -> offset). Deferred by [ADR 0002](docs/adr/0002-integrity-and-indexing.md): `get` is a reverse scan of the sync log until benchmarks justify an index
+- [x] Hash-collision handling for `key_hash: u64` (full-key compare)
+- [x] Sequential Sync Segment reader from offset (`events_since`)
+- [x] Lamport clock + node_id management
+- [x] Compaction: rewrite State, truncate Sync, crash-safe swap (`compact_into`, `compact_file`; see [ADR 0003](docs/adr/0003-compaction-and-generations.md))
+- [x] Define what compaction means for peers behind the truncation point: generations, latest-per-key semantics (ADR 0003)
+- [ ] Snapshot/resync wire protocol for peers with a stale generation (Phase 2)
+- [x] `alloc`-level JSON helpers (`put_json` / `get_json`), behind the `json` feature
+- [x] Error type (hand-rolled, with `std::error::Error` under `std`; see ADR 0002)
+- [x] `tpt-hyle-test-utils`: in-memory store, proptest generators (mock transports belong to Phase 2)
+- [x] `tpt-hyle-cli`: `inspect`, `dump-sync-log`, `verify`, `compact`
+- [x] Corruption tests: truncated/flipped-bit files never panic (exhaustive single-bit sweep, truncation property, fuzz target)
+- [x] Property tests against a reference model, including torn-tail recovery
+- [x] Stress tests: 10,000-op random histories with reopens and compactions, file-backed variant, feed replay checked against state
+- [ ] Benchmarks vs SQLite (KV write workload); target 10x. Harness: `bench/` (outside the workspace). Measured on 20k writes: in-memory tpt-hyle 4.9x faster. File, one durable commit per write: 0.34x. File, batches of 100: 0.36x (15.5k vs 42.7k writes/s). The remaining gap is three durable flushes per commit against SQLite WAL's one. Closing it needs a single-file layout or a different durability barrier, which is a format decision still open.
+- [x] CI builds core on `thumbv7em-none-eabihf` and `wasm32-unknown-unknown` (wasm steps added to CI)
 
 ## Phase 2: tpt-rift + unified API (Year 2)
 
-- [ ] `Transport` trait (the spec uses `Vec<ChangeEvent>`; decide if payload bytes ride along, since events only carry offsets)
-- [ ] Wire format for deltas (events + payloads), versioned
-- [ ] LWW element-set resolver, ordered by `(lamport, node_id)`
-- [ ] Apply remote events into tpt-hyle without echoing them back (origin tracking)
-- [ ] Per-peer sync cursors (last seen offset)
-- [ ] Sync loop (timer / connectivity triggered), backoff
+- [x] `Transport` trait. Decided: deltas carry key and value, because offsets are meaningless to a peer ([ADR 0004](docs/adr/0004-replication-semantics.md))
+- [x] Wire format for deltas (keys, values, lamport, node id, tombstone), versioned ([docs/wire.md](docs/wire.md))
+- [x] Last-writer-wins resolver per key, ordered by `(lamport, node_id)`. Named "LWW register per key": there is no element set yet
+- [x] Apply remote events into tpt-hyle without echoing them back (origin tracking; forwarding through a middle node still works)
+- [x] Per-peer sync cursors `(generation, offset)`, advanced only after delivery
+- [x] Background sync loop: timer-driven `run_until` with backoff. Connectivity-triggered rounds are not done
 - [ ] Basic JSON CRDT (field-level LWW)
-- [ ] Mock transport + two-instance offline-write convergence test
-- [ ] `tpt-hyle-rift`: `open()`, `connect()`, background loop, `resume()`
-- [ ] Property test: convergence regardless of delta order/duplication
-- [ ] Examples in `examples/`
+- [x] Mock transport and two-instance offline-write convergence test
+- [x] `tpt-hyle-rift`: `open()`, `connect()`, `resume()` (with automatic recovery from a stale generation). Background loop still open
+- [x] Property test: convergence under reordering and duplication (mutation-checked)
+- [x] Examples in `crates/tpt-hyle-rift/examples/` (`two_replicas`)
 
 ## Phase 3: Client-server (Year 3)
 
-- [ ] `tpt-rift-transport-ws` client + server halves
+- [x] `tpt-rift-transport-ws` client + server halves (no auth or TLS yet; see the Phase 3 auth item)
 - [ ] `tpt-rift-server` (axum, WebSocket endpoint, tpt-hyle storage)
 - [ ] Authentication (decide: token / JWT / mTLS)
 - [ ] Access control (per-namespace/key-prefix rules)
@@ -95,7 +101,7 @@ Source of truth for design: [spec.txt](spec.txt) (RFC 003). Tick items as they l
 
 ## Open questions
 
-- [ ] Security model: encryption at rest? signed events? (spec is silent)
+- [ ] Security model: encryption at rest? signed events? (spec is silent; CRC-32C detects corruption, not tampering. See [SECURITY.md](SECURITY.md))
 - [ ] Schema/versioning and migration story
 - [ ] Is "100% formal verification" realistic with serde in the path? Scope proofs to the no_alloc core.
 - [ ] Spec's `LWW-ES` vs JSON CRDT selection: per-key type tag or per-namespace?

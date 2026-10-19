@@ -1,0 +1,34 @@
+# cargo-deny configuration: licenses, advisories, bans, sources.
+# Run with: cargo deny check
+
+[graph]
+all-features = true
+
+[advisories]
+unmaintained = "workspace"
+yanked = "deny"
+
+[licenses]
+# Permissive licenses only, so that every dependency is compatible with the
+# dual MIT OR Apache-2.0 license of this project.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

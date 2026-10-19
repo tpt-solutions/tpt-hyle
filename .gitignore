@@ -4,3 +4,7 @@ Cargo.lock.bak
 *.hyle
 .idea/
 .vscode/
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+bench/target/

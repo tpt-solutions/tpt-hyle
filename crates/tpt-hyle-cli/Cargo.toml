@@ -1,6 +1,9 @@
 [package]
 name = "tpt-hyle-cli"
 description = "CLI to inspect, dump, compact and verify tpt-hyle databases"
+readme = "README.md"
+keywords = ["tpt-hyle", "cli", "inspect", "debugging", "database"]
+categories = ["command-line-utilities", "database"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,9 @@
 [package]
 name = "tpt-rift-transport-ws"
 description = "WebSocket transport for tpt-rift"
+readme = "README.md"
+keywords = ["websocket", "sync", "transport", "offline-first", "tpt-rift"]
+categories = ["network-programming", "web-programming::websocket"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,5 +13,10 @@ repository.workspace = true
 
 [dependencies]
 tpt-rift = { workspace = true }
+async-trait = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = "0.24"
+futures-util = "0.3"
+
+[dev-dependencies]
+tpt-hyle = { workspace = true, features = ["std"] }

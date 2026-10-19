@@ -1,6 +1,9 @@
 [package]
 name = "tpt-hyle"
 description = "Sync-native, append-only micro key-value store (State + Sync segments)"
+readme = "README.md"
+keywords = ["database", "offline-first", "crdt", "no-std", "storage"]
+categories = ["database-implementations", "no-std", "embedded"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +15,8 @@ repository.workspace = true
 default = ["std"]
 std = ["alloc"]
 alloc = []
+json = ["alloc", "dep:serde", "dep:serde_json"]
 
 [dependencies]
-serde = { workspace = true }
-sha2 = { workspace = true }
-thiserror = { workspace = true, optional = true }
+serde = { version = "1.0", default-features = false, features = ["alloc"], optional = true }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"], optional = true }

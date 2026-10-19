@@ -1,6 +1,9 @@
 [package]
 name = "tpt-rift-wasm"
 description = "WebAssembly bindings for tpt-hyle-rift (IndexedDB backing store)"
+readme = "README.md"
+keywords = ["wasm", "indexeddb", "offline-first", "sync", "tpt-rift"]
+categories = ["wasm", "web-programming"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

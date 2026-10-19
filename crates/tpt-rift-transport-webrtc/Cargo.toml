@@ -1,6 +1,9 @@
 [package]
 name = "tpt-rift-transport-webrtc"
 description = "WebRTC peer-to-peer transport for tpt-rift"
+readme = "README.md"
+keywords = ["webrtc", "p2p", "sync", "offline-first", "tpt-rift"]
+categories = ["network-programming"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

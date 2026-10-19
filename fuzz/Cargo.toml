@@ -1,0 +1,22 @@
+[package]
+name = "tpt-hyle-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Not a member of the main workspace. cargo-fuzz builds it on its own.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tpt-hyle = { path = "../crates/tpt-hyle", features = ["alloc"] }
+
+[[bin]]
+name = "open_corrupt"
+path = "fuzz_targets/open_corrupt.rs"
+test = false
+doc = false
+bench = false

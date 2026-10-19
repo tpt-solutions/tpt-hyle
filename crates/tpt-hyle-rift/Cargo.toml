@@ -1,6 +1,9 @@
 [package]
 name = "tpt-hyle-rift"
 description = "Unified API: tpt-hyle storage plus tpt-rift sync with open() and connect()"
+readme = "README.md"
+keywords = ["offline-first", "sync", "crdt", "storage", "tpt-hyle"]
+categories = ["database-implementations"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

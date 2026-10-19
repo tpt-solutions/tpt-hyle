@@ -1,6 +1,9 @@
 [package]
 name = "tpt-rift-server"
 description = "Self-hostable reference sync server for tpt-rift"
+readme = "README.md"
+keywords = ["sync-server", "websocket", "offline-first", "self-hosted", "tpt-rift"]
+categories = ["web-programming::http-server"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

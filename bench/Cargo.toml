@@ -1,0 +1,14 @@
+[package]
+name = "tpt-hyle-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "KV write benchmark: tpt-hyle against SQLite"
+
+# Not a member of the main workspace. It pulls in SQLite, a C library, and
+# the core crate must stay pure Rust.
+[workspace]
+
+[dependencies]
+tpt-hyle = { path = "../crates/tpt-hyle" }
+rusqlite = { version = "0.32", features = ["bundled"] }

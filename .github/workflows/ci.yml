@@ -20,6 +20,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "thumbv7em-none-eabihf, wasm32-unknown-unknown" }
       - run: cargo build -p tpt-hyle --no-default-features --target thumbv7em-none-eabihf
+      - run: cargo build -p tpt-hyle --no-default-features --target wasm32-unknown-unknown
+      - run: cargo build -p tpt-hyle --no-default-features --features alloc --target wasm32-unknown-unknown
   msrv:
     runs-on: ubuntu-latest
     steps:
