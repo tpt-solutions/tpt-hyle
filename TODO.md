@@ -53,7 +53,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] Corruption tests: truncated/flipped-bit files never panic (exhaustive single-bit sweep, truncation property, fuzz target)
 - [x] Property tests against a reference model, including torn-tail recovery
 - [x] Stress tests: 10,000-op random histories with reopens and compactions, file-backed variant, feed replay checked against state
-- [ ] Benchmarks vs SQLite (KV write workload); target 10x. Harness: `bench/` (outside the workspace). Measured on 20k writes: in-memory tpt-hyle 4.9x faster. File, one durable commit per write: 0.34x. File, batches of 100: 0.36x (15.5k vs 42.7k writes/s). The remaining gap is three durable flushes per commit against SQLite WAL's one. Closing it needs a single-file layout or a different durability barrier, which is a format decision still open.
+- [ ] Benchmarks vs SQLite (KV write workload); target 10x. Results and method: [docs/benchmarks.md](docs/benchmarks.md). Harness: `bench/` (outside the workspace). Measured on 20k writes: in-memory tpt-hyle 4.9x faster. File, one durable commit per write: 0.34x. File, batches of 100: 0.36x (15.5k vs 42.7k writes/s). The remaining gap is three durable flushes per commit against SQLite WAL's one. Closing it needs a single-file layout or a different durability barrier, which is a format decision still open.
 - [x] CI builds core on `thumbv7em-none-eabihf` and `wasm32-unknown-unknown` (wasm steps added to CI)
 
 ## Phase 2: tpt-rift + unified API (Year 2)
