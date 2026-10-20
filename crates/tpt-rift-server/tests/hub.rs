@@ -43,6 +43,10 @@ impl Client {
 
 /// Starts a hub on an ephemeral port, with the given token entries.
 async fn start_hub(tokens: Vec<TokenConfig>) -> std::net::SocketAddr {
+    start_hub_with_rate(tokens, 200).await
+}
+
+async fn start_hub_with_rate(tokens: Vec<TokenConfig>, rate: u32) -> std::net::SocketAddr {
     let dir = std::env::temp_dir().join(format!(
         "tpt-rift-server-{}-{}",
         std::process::id(),
@@ -55,6 +59,7 @@ async fn start_hub(tokens: Vec<TokenConfig>) -> std::net::SocketAddr {
         node_id: HUB_NODE.to_string(),
         max_message_bytes: 1 << 20,
         poll_ms: 5,
+        messages_per_second: rate,
         tokens,
     };
     let (hub_node, access) = Access::from_config(&config).unwrap();
@@ -69,6 +74,7 @@ async fn start_hub(tokens: Vec<TokenConfig>) -> std::net::SocketAddr {
         Registry::default(),
         Duration::from_millis(5),
         1 << 20,
+        rate,
     ));
     addr
 }
@@ -389,4 +395,32 @@ async fn webrtc_peers_connect_through_the_hub_and_sync() {
     })
     .await;
     assert!(done.is_ok(), "the data channel did not carry the delta");
+}
+
+#[tokio::test]
+async fn a_client_over_its_message_rate_is_disconnected() {
+    let addr = start_hub_with_rate(vec![entry("flood", 10, &[], &[])], 20).await;
+    let client = client(addr, "flood", 10).await;
+    // The burst is 20 messages. Send well past it, as fast as the socket allows.
+    for _ in 0..300 {
+        if client
+            .transport
+            .send_text(&encode_signal(99, "offer", "x"))
+            .await
+            .is_err()
+        {
+            break;
+        }
+    }
+    let closed = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match client.transport.receive().await {
+                Err(_) => return true,
+                Ok(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(closed, "the hub should disconnect a client over its rate");
 }

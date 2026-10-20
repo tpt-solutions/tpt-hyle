@@ -36,6 +36,8 @@ use tpt_rift_transport_ws::{accept_with, WebSocketTransport};
 pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 1 << 20;
 /// How often each connection checks for new changes, unless configured.
 pub const DEFAULT_POLL_MS: u64 = 25;
+/// Messages per second each client may send, unless the config says otherwise.
+pub const DEFAULT_MESSAGES_PER_SECOND: u32 = 200;
 /// Events read per export. A longer backlog goes out over several polls.
 const EXPORT_BATCH: usize = 1024;
 
@@ -57,12 +59,20 @@ pub struct Config {
     /// Poll interval for each connection, in milliseconds.
     #[serde(default = "default_poll_ms")]
     pub poll_ms: u64,
+    /// Sustained messages per second from each client, with a burst of the
+    /// same size. A client that exceeds it is disconnected.
+    #[serde(default = "default_messages_per_second")]
+    pub messages_per_second: u32,
     /// One entry per client.
     pub tokens: Vec<TokenConfig>,
 }
 
 fn default_max_message_bytes() -> usize {
     DEFAULT_MAX_MESSAGE_BYTES
+}
+
+fn default_messages_per_second() -> u32 {
+    DEFAULT_MESSAGES_PER_SECOND
 }
 
 fn default_poll_ms() -> u64 {
@@ -265,6 +275,38 @@ struct SignalFrom {
     sdp: String,
 }
 
+/// A token bucket for one connection. Holds up to `rate` tokens, refills at
+/// `rate` per second, and each message takes one.
+struct Bucket {
+    rate: f64,
+    tokens: f64,
+    last: std::time::Instant,
+}
+
+impl Bucket {
+    fn new(rate: u32) -> Self {
+        let rate = f64::from(rate.max(1));
+        Self {
+            rate,
+            tokens: rate,
+            last: std::time::Instant::now(),
+        }
+    }
+
+    /// Takes one token, or fails when the connection has no budget left.
+    fn spend(&mut self) -> Result<(), RiftError> {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + elapsed * self.rate).min(self.rate);
+        if self.tokens < 1.0 {
+            return Err(RiftError::Protocol("message rate limit exceeded"));
+        }
+        self.tokens -= 1.0;
+        Ok(())
+    }
+}
+
 /// Serves one authenticated connection until it closes or breaks a rule.
 pub async fn serve_connection(
     conn: WebSocketTransport<TcpStream>,
@@ -272,7 +314,9 @@ pub async fn serve_connection(
     hub: Hub,
     registry: Registry,
     poll: Duration,
+    messages_per_second: u32,
 ) -> Result<(), RiftError> {
+    let mut budget = Bucket::new(messages_per_second);
     let (signal_tx, mut signals) = unbounded_channel::<String>();
     if let Ok(mut map) = registry.lock() {
         map.insert(auth.node_id, signal_tx.clone());
@@ -289,6 +333,7 @@ pub async fn serve_connection(
     };
     loop {
         while let Some(text) = conn.take_text()? {
+            budget.spend()?;
             relay_signal(&registry, auth.node_id, &text);
         }
         while let Ok(text) = signals.try_recv() {
@@ -296,6 +341,7 @@ pub async fn serve_connection(
         }
 
         while let Some(delta) = conn.receive().await? {
+            budget.spend()?;
             let accepted = screen_incoming(delta, &auth)?;
             if !accepted.changes.is_empty() {
                 hub.lock().await.import(&accepted)?;
@@ -348,6 +394,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         registry,
         poll,
         config.max_message_bytes,
+        config.messages_per_second,
     )
     .await;
     Ok(())
@@ -362,6 +409,7 @@ pub async fn accept_loop(
     registry: Registry,
     poll: Duration,
     max_bytes: usize,
+    messages_per_second: u32,
 ) {
     loop {
         let (stream, peer) = match listener.accept().await {
@@ -375,7 +423,17 @@ pub async fn accept_loop(
         let hub = hub.clone();
         let registry = registry.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle(stream, access, hub, registry, poll, max_bytes).await {
+            if let Err(e) = handle(
+                stream,
+                access,
+                hub,
+                registry,
+                poll,
+                max_bytes,
+                messages_per_second,
+            )
+            .await
+            {
                 eprintln!("connection from {peer} ended: {e}");
             }
         });
@@ -392,6 +450,7 @@ async fn handle(
     registry: Registry,
     poll: Duration,
     max_bytes: usize,
+    messages_per_second: u32,
 ) -> Result<(), RiftError> {
     let mut granted: Option<Auth> = None;
     let conn = accept_with(stream, max_bytes, |request, response| {
@@ -412,7 +471,7 @@ async fn handle(
     let auth = granted.ok_or(RiftError::Protocol(
         "handshake accepted without credentials",
     ))?;
-    serve_connection(conn, auth, hub, registry, poll).await
+    serve_connection(conn, auth, hub, registry, poll, messages_per_second).await
 }
 
 fn unauthorized() -> tokio_tungstenite::tungstenite::handshake::server::ErrorResponse {

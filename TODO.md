@@ -77,7 +77,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] Authentication: bearer tokens stored as SHA-256 hashes, each bound to one node id. JWT and mTLS deferred ([ADR 0006](docs/adr/0006-server-auth-and-access.md))
 - [x] Access control: per-token key-prefix read and write lists
 - [x] Multi-client fan-out (polling hub; each connection keeps its own cursor)
-- [x] Message size limit. Rate limiting is not built
+- [x] Message size limit and per-connection rate limit (token bucket, disconnect on excess)
 - [ ] TLS: deliberately not in the server. Expected from a reverse proxy, documented in docs/server.md
 - [ ] Docker image and deploy docs: Dockerfile and docs written, not built (no Docker daemon was running here)
 - [ ] End-to-end demo app syncing to self-hosted server

@@ -70,6 +70,6 @@ everything, so `""` means "all keys". An empty list means "nothing".
 - Token rotation means removing the old hash and adding a new entry. There is
   no revocation list, because the config is the list.
 - Access rules cover key prefixes only. They do not limit how many
-  events a client may send. Rate limiting is not built.
+  events a client may send. Each connection is rate-limited by a token bucket, so a flood disconnects the sender rather than starving other clients.
 - The hub's own node id must differ from every client's, and the server checks
   that at startup.

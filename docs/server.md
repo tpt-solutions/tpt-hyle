@@ -28,6 +28,7 @@ access rules in [ADR 0006](adr/0006-server-auth-and-access.md).
   "node_id": "1",
   "max_message_bytes": 1048576,
   "poll_ms": 25,
+  "messages_per_second": 200,
   "tokens": [
     {
       "sha256": "<hash from new-token>",
@@ -70,12 +71,14 @@ you do not fully control:
   prefixes closes the connection.
 - **Reads.** A client receives only keys matching its read prefixes.
 - **Size.** A message larger than `max_message_bytes` is refused.
+- **Rate.** Each connection has a token bucket of `messages_per_second`. A
+  client that exceeds it is disconnected. Its reconnect logic then backs off.
 - **Fan-out.** Each connection polls the hub every `poll_ms` for changes it
   has not sent yet. Clients converge without any extra coordination.
 
 ## Not yet built
 
-- Rate limiting. A client can send as many changes as its connection allows.
+
 - Per-token revocation. Remove the entry from the config and restart.
 - Hot reload of the config. A restart is required.
 - Compaction on a running hub. Stop the server, compact the store offline with

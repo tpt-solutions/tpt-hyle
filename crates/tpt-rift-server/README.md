@@ -5,7 +5,7 @@ authenticated WebSocket connections, and passes changes between clients.
 
 - Bearer tokens, stored only as SHA-256 hashes. Each token is bound to one node id.
 - Key-prefix read and write permissions per token.
-- Message size limit. Changes are checked against the token's rules before they are applied.
+- Message size limit and a per-connection rate limit.
 
 ```sh
 tpt-rift-server new-token
@@ -15,7 +15,7 @@ tpt-rift-server serve server.json
 Operator guide, example config, and the TLS requirement: [docs/server.md](../../docs/server.md).
 Design: [ADR 0006](../../docs/adr/0006-server-auth-and-access.md).
 
-**Not built yet:** rate limiting, hot config reload, a container image.
+**Not built yet:** hot config reload. The container image is written (see the Dockerfile) but not built here.
 TLS is expected from a reverse proxy.
 
 ## License
