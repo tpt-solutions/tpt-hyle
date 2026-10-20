@@ -86,8 +86,8 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 
 - [ ] `tpt-rift-transport-webrtc` (signaling approach to decide)
 - [ ] LAN discovery (mDNS / UDP broadcast)
-- [ ] `tpt-rift-wasm`: wasm-bindgen API, IndexedDB `Storage` backend
-- [ ] Browser demo: offline web app syncing P2P
+- [x] `tpt-rift-wasm`: wasm-bindgen API over an in-memory store, tested under Node ([ADR 0010](docs/adr/0010-wasm-bindings.md)). IndexedDB persistence is not built
+- [ ] Browser demo: offline web app syncing P2P (the Node demo covers the same calls; no page yet)
 - [ ] Kani harnesses: allocator bounds, segment-offset invariants through compaction
 - [ ] CRDT determinism proof/tests (order-independence)
 

@@ -1,8 +1,8 @@
 [package]
 name = "tpt-rift-wasm"
-description = "WebAssembly bindings for tpt-hyle-rift (IndexedDB backing store)"
+description = "WebAssembly bindings for tpt-rift: an in-memory replica that syncs by passing bytes"
 readme = "README.md"
-keywords = ["wasm", "indexeddb", "offline-first", "sync", "tpt-rift"]
+keywords = ["wasm", "offline-first", "sync", "crdt", "tpt-rift"]
 categories = ["wasm", "web-programming"]
 version.workspace = true
 edition.workspace = true
@@ -15,6 +15,9 @@ repository.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-tpt-hyle-rift = { workspace = true }
+tpt-hyle = { workspace = true, features = ["alloc"] }
+tpt-rift = { workspace = true }
 wasm-bindgen = "0.2"
-web-sys = "0.3"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

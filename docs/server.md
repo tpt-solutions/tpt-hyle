@@ -78,6 +78,25 @@ you do not fully control:
 - Rate limiting. A client can send as many changes as its connection allows.
 - Per-token revocation. Remove the entry from the config and restart.
 - Hot reload of the config. A restart is required.
-- A container image. It is not attempted here.
 - Compaction on a running hub. Stop the server, compact the store offline with
   the CLI, then start it again.
+
+## Container image
+
+The repository's `Dockerfile` builds a container with the server binary and a
+non-root user. The data lives in a volume, and the config is mounted read-only:
+
+    docker build -t tpt-rift-server .
+    docker run -d --name tpt-rift -p 127.0.0.1:8080:8080 \
+      -v tpt-rift-data:/var/lib/tpt-rift \
+      -v "$PWD/server.json:/etc/tpt-rift/server.json:ro" \
+      tpt-rift-server
+
+Inside the container, `listen` must be `0.0.0.0:8080`, so that the published
+port reaches the process. Publish it on `127.0.0.1` only, and keep the reverse
+proxy in front of it.
+
+**Not verified here.** The image was written but not built, because no Docker
+daemon was running on the machine where this was done. The first build should
+be run by someone with a daemon. The `--locked` build depends on the committed
+`Cargo.lock`.
