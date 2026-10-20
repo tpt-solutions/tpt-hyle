@@ -63,10 +63,10 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] Last-writer-wins resolver per key, ordered by `(lamport, node_id)`. Named "LWW register per key": there is no element set yet
 - [x] Apply remote events into tpt-hyle without echoing them back (origin tracking; forwarding through a middle node still works)
 - [x] Per-peer sync cursors `(generation, offset)`, advanced only after delivery
-- [x] Background sync loop: timer-driven `run_until` with backoff. Connectivity-triggered rounds are not done
+- [x] Background sync loop: `run_until` with backoff, and `run_reconnecting` with reconnection after drops, a `Trigger` for local writes, and a timer ([ADR 0009](docs/adr/0009-reconnecting-sync.md))
 - [x] Basic JSON CRDT: field-level LWW, one store key per leaf ([ADR 0007](docs/adr/0007-json-document-crdt.md)). Arrays are whole-value leaves; element-level merge is not built
 - [x] Mock transport and two-instance offline-write convergence test
-- [x] `tpt-hyle-rift`: `open()`, `connect()`, `resume()` (with automatic recovery from a stale generation). Timer-driven `run_until` added; connectivity triggers still open
+- [x] `tpt-hyle-rift`: `open()`, `connect()`, `resume()` (with automatic recovery from a stale generation).
 - [x] Property test: convergence under reordering and duplication (mutation-checked)
 - [x] Examples in `crates/tpt-hyle-rift/examples/` (`two_replicas`)
 

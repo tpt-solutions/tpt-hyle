@@ -15,8 +15,10 @@
 
 use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Notify;
 use tpt_hyle::{FileStorage, Hyle};
 use tpt_rift::{sync_round, Backoff, PeerLink, Replica, RiftError, RoundStats, Transport};
 
@@ -26,6 +28,29 @@ pub const DEFAULT_MAX_EVENTS: usize = 4096;
 /// A local, file-backed replica. Use it for reads and writes, as with
 /// [`tpt_hyle::Hyle`].
 pub type Database = Replica<FileStorage, FileStorage>;
+
+/// Wakes a running sync loop so it syncs now instead of at the next tick.
+///
+/// Call [`Trigger::notify`] after a local write. Several notifications that
+/// arrive before the loop wakes count as one round.
+#[derive(Clone, Default)]
+pub struct Trigger(Arc<Notify>);
+
+impl Trigger {
+    /// A new trigger, not yet connected to any loop.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests a round. Never blocks.
+    pub fn notify(&self) {
+        self.0.notify_one();
+    }
+
+    async fn notified(&self) {
+        self.0.notified().await;
+    }
+}
 
 /// Opens (or creates) the database at `path` for `node_id`.
 ///
@@ -111,8 +136,8 @@ impl<T: Transport> Connection<'_, T> {
     /// consecutive failure. A store error stops the loop and is returned,
     /// because retrying cannot fix a damaged or poisoned store.
     ///
-    /// This is timer-driven only. Connectivity-triggered rounds are the
-    /// caller's job for now.
+    /// This loop never reconnects. For a transport that can drop, use
+    /// [`run_reconnecting`].
     pub async fn run_until<F: Future<Output = ()>>(
         &mut self,
         interval: Duration,
@@ -137,6 +162,87 @@ impl<T: Transport> Connection<'_, T> {
                 _ = &mut stop => return Ok(()),
                 _ = tokio::time::sleep(wait) => {}
             }
+        }
+    }
+}
+
+/// How often and how hard a reconnecting session syncs.
+#[derive(Debug, Clone, Copy)]
+pub struct SyncPolicy {
+    /// Time between rounds when nothing triggers one.
+    pub interval: Duration,
+    /// Delays between attempts after a failure.
+    pub backoff: Backoff,
+    /// Most events exported per round.
+    pub max_events: usize,
+}
+
+impl Default for SyncPolicy {
+    fn default() -> Self {
+        Self {
+            interval: Duration::from_secs(30),
+            backoff: Backoff {
+                base: Duration::from_millis(250),
+                max: Duration::from_secs(60),
+            },
+            max_events: DEFAULT_MAX_EVENTS,
+        }
+    }
+}
+
+/// Keeps a session with one peer alive until `stop` completes.
+///
+/// `connect` opens a fresh transport. It runs at the start and after every
+/// failure, with backoff between attempts. Within a connection, a round runs
+/// on the policy's interval, or as soon as `trigger` is notified. Each new
+/// connection resends the whole log. That is safe because import is
+/// idempotent, and it covers anything the dead connection may have dropped
+/// after `send` returned.
+///
+/// A store error stops the loop and is returned.
+pub async fn run_reconnecting<T, C, Fut, S>(
+    db: &mut Database,
+    peer_node: u128,
+    mut connect: C,
+    policy: SyncPolicy,
+    trigger: &Trigger,
+    stop: S,
+) -> Result<(), RiftError>
+where
+    T: Transport,
+    C: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, RiftError>>,
+    S: Future<Output = ()>,
+{
+    tokio::pin!(stop);
+    let mut link = PeerLink::new(peer_node, db);
+    let mut failures = 0u32;
+    loop {
+        let session_failure = match connect().await {
+            Ok(transport) => {
+                link.reset(db);
+                loop {
+                    match sync_round(db, &mut link, &transport, policy.max_events).await {
+                        Ok(_) => failures = 0,
+                        Err(RiftError::Store(e)) => return Err(RiftError::Store(e)),
+                        Err(RiftError::StaleGeneration { .. }) => link.reset(db),
+                        Err(e) => break e,
+                    }
+                    tokio::select! {
+                        _ = &mut stop => return Ok(()),
+                        _ = tokio::time::sleep(policy.interval) => {}
+                        _ = trigger.notified() => {}
+                    }
+                }
+            }
+            Err(RiftError::Store(e)) => return Err(RiftError::Store(e)),
+            Err(e) => e,
+        };
+        failures = failures.saturating_add(1);
+        let _ = session_failure;
+        tokio::select! {
+            _ = &mut stop => return Ok(()),
+            _ = tokio::time::sleep(policy.backoff.delay(failures)) => {}
         }
     }
 }
