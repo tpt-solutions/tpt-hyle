@@ -11,3 +11,4 @@ bench/target/
 crates/tpt-rift-wasm/pkg/
 crates/tpt-rift-wasm/pkg-node/
 pkg-node/
+crates/tpt-rift-wasm/web/node_modules/

@@ -141,6 +141,18 @@ impl VecStorage {
     pub fn bytes_mut(&mut self) -> &mut [u8] {
         &mut self.buf
     }
+
+    /// A region holding `bytes`, as previously read with [`VecStorage::bytes`].
+    /// Used to restore a store that was saved outside the engine. Recovery runs
+    /// when the store is opened, so the bytes need not be intact.
+    pub fn from_bytes(bytes: alloc::vec::Vec<u8>) -> Self {
+        Self { buf: bytes }
+    }
+
+    /// The written bytes, for saving the region outside the engine.
+    pub fn bytes(&self) -> &[u8] {
+        &self.buf
+    }
 }
 
 #[cfg(feature = "alloc")]

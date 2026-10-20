@@ -93,3 +93,34 @@ impl Store {
         Ok(stats.applied as u32)
     }
 }
+
+#[wasm_bindgen]
+impl Store {
+    /// Restores a store from the bytes of its two segments, as returned by
+    /// [`Store::state_bytes`] and [`Store::sync_bytes`]. Recovery runs, so a
+    /// tail torn by an interrupted save is dropped, as it would be on disk.
+    pub fn load(node_id: &str, state: &[u8], sync: &[u8]) -> Result<Store, JsError> {
+        let node: u128 = node_id
+            .parse()
+            .map_err(|_| JsError::new("node_id must be a decimal u128"))?;
+        let db = Hyle::open(
+            VecStorage::from_bytes(state.to_vec()),
+            VecStorage::from_bytes(sync.to_vec()),
+            node,
+        )
+        .map_err(js_err)?;
+        Ok(Store {
+            replica: Replica::new(db),
+        })
+    }
+
+    /// The state segment, as bytes, for saving.
+    pub fn state_bytes(&self) -> Vec<u8> {
+        self.replica.store_ref().segments().0.bytes().to_vec()
+    }
+
+    /// The sync segment, as bytes, for saving.
+    pub fn sync_bytes(&self) -> Vec<u8> {
+        self.replica.store_ref().segments().1.bytes().to_vec()
+    }
+}

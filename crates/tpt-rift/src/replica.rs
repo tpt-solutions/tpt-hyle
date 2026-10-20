@@ -48,6 +48,11 @@ impl<St: Storage, Sy: Storage> Replica<St, Sy> {
     }
 
     /// The underlying store, for local reads and writes.
+    pub fn store_ref(&self) -> &Hyle<St, Sy> {
+        &self.store
+    }
+
+    /// The underlying store, for local reads and writes.
     pub fn store(&mut self) -> &mut Hyle<St, Sy> {
         &mut self.store
     }

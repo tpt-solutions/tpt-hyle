@@ -282,6 +282,11 @@ impl<St: Storage, Sy: Storage> Hyle<St, Sy> {
 
     /// Returns the two segments, consuming the store. Useful for reopening
     /// and for fault-injection tests.
+    pub fn segments(&self) -> (&St, &Sy) {
+        (&self.state, &self.sync)
+    }
+
+    /// Returns the two segments, consuming the store.
     pub fn into_parts(self) -> (St, Sy) {
         (self.state, self.sync)
     }

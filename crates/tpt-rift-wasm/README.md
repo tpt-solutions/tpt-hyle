@@ -10,8 +10,9 @@ node crates/tpt-rift-wasm/examples/two_stores.cjs
 
 Tests run under Node: `wasm-pack test --node crates/tpt-rift-wasm`.
 
-Not built: IndexedDB persistence (it needs an asynchronous storage path) and a
-browser demo page. Design: [ADR 0010](../../docs/adr/0010-wasm-bindings.md).
+IndexedDB persistence is in `web/` (`persistence.js`), tested under Node with fake-indexeddb.
+Not built: a browser demo page.
+Design: [ADR 0010](../../docs/adr/0010-wasm-bindings.md).
 
 ## License
 

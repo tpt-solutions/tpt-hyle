@@ -40,3 +40,19 @@ page.
 - The wasm build is small and runs anywhere wasm does.
 - Nothing survives a page reload yet.
 - A browser demo page is not written. The Node example shows the same calls.
+
+## Update: IndexedDB persistence
+
+Persistence is now built, in the JavaScript layer, as the decision above
+prescribes. `web/persistence.js` writes both segments in one IndexedDB
+transaction after each save, and `Store.load` restores them. Recovery runs on
+load, so a save cut short by a crash leaves a tail that is dropped, as it would
+be on disk.
+
+Each save writes the whole store. That is O(size) per save. Incremental saves
+are the next step, and the core already supports them, since the segments are
+append-only between compactions.
+
+Tested under Node with `fake-indexeddb`, which is a real IndexedDB
+implementation. The tests cover restore, a missing database, replacement by a
+later save, a torn tail, and a node id mismatch. Not tested in a browser.

@@ -1,0 +1,13 @@
+{
+  "name": "tpt-rift-persist",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Saves a tpt-rift wasm store to IndexedDB and restores it",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/persist.test.mjs"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.0.0"
+  }
+}
