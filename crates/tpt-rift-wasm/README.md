@@ -1,7 +1,14 @@
 # tpt-rift-wasm
 
-WebAssembly bindings for tpt-rift. A `Store` is an in-memory replica. It does
-no I/O: JavaScript moves the bytes with `export` and `import`.
+WebAssembly bindings for tpt-rift. A `Store` is an in-memory encrypted replica.
+It does no I/O: JavaScript moves the bytes with `export` and `import`.
+
+- `new Store(node_id, passphrase)` creates an empty store. `Store.load(node_id,
+  passphrase, bytes)` restores one from `save()`. A wrong passphrase is an error.
+- `save()` returns the whole store, sealed. Persist it, for example in IndexedDB
+  (`web/persistence.js`).
+- Writes are signed by the store's node. The bindings do not expose a
+  directory of node keys yet, so `import` does not check signatures.
 
 ```sh
 wasm-pack build --target nodejs crates/tpt-rift-wasm --out-dir pkg-node

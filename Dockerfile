@@ -2,6 +2,7 @@
 #
 # Build:  docker build -t tpt-rift-server .
 # Run:    docker run -p 127.0.0.1:8080:8080 \
+#           --env-file hub.env \
 #           -v tpt-rift-data:/var/lib/tpt-rift \
 #           -v "$PWD/server.json:/etc/tpt-rift/server.json:ro" \
 #           tpt-rift-server

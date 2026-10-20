@@ -1,5 +1,8 @@
 # ADR 0008: Key index
 
+> **Note.** The index is unchanged in principle. Keys are now hashed with FNV-1a, and each candidate is checked against the full key. The index is rebuilt from the file on open. See [docs/format.md](../format.md).
+
+
 Status: accepted
 
 ## Context

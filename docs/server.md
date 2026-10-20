@@ -118,9 +118,22 @@ non-root user. The data lives in a volume, and the config is mounted read-only:
 
     docker build -t tpt-rift-server .
     docker run -d --name tpt-rift -p 127.0.0.1:8080:8080 \
+      --env-file hub.env \
       -v tpt-rift-data:/var/lib/tpt-rift \
       -v "$PWD/server.json:/etc/tpt-rift/server.json:ro" \
       tpt-rift-server
+
+`hub.env` holds `TPT_HUB_PASSPHRASE=...`. Keep it out of the image and out of
+version control. To collect tombstones, stop the container and run the same
+image with `collect`, using the same volume and env file:
+
+    docker run --rm --env-file hub.env \
+      -v tpt-rift-data:/var/lib/tpt-rift \
+      -v "$PWD/server.json:/etc/tpt-rift/server.json:ro" \
+      tpt-rift-server collect /etc/tpt-rift/server.json
+
+The `store` path in the config must sit under `/var/lib/tpt-rift`, which is the
+volume.
 
 Inside the container, `listen` must be `0.0.0.0:8080`, so that the published
 port reaches the process. Publish it on `127.0.0.1` only, and keep the reverse

@@ -1,38 +1,47 @@
 # tpt-hyle
 
-A sync-native, append-only key-value store. Every write lands in two
-segments: the value in the **State Segment**, and a fixed 56-byte
-`ChangeEvent` in the **Sync Segment**. The Sync Segment is the replication
-feed, so no change-tracking layer is needed.
+A sync-native, append-only key-value store. The write log is the replication
+feed, so no change-tracking layer is needed. A store is one encrypted file.
+Every write is an Ed25519-signed, XChaCha20-Poly1305-sealed frame.
 
 - `no_std`, with a heap-free core path (`FixedStorage`).
-- `alloc` adds the growable in-memory `VecStorage`.
-- `std` adds file-backed storage (`Hyle::open_file`).
-- CRC-32C on every record. Torn tails are truncated on open. Mid-log damage
-  is reported, not silently dropped.
+- `alloc` adds the growable in-memory `VecStorage` and the engine.
+- `std` adds the file backend (`Hyle::open_file`) and passphrase keys (Argon2id).
+- Batches commit with one fsync. A torn tail is truncated on open. Damage inside
+  committed data is reported, not silently dropped.
 
 ```rust
-use tpt_hyle::{FixedStorage, Hyle};
+use tpt_hyle::Hyle;
 
-let mut db = Hyle::open(FixedStorage::<4096>::new(), FixedStorage::<4096>::new(), 1)?;
+let mut db = Hyle::open_file("notes.db", 1, b"a passphrase")?;
 db.put(b"user:101", b"alice")?;
 
 let mut buf = [0u8; 16];
 let n = db.get(b"user:101", &mut buf)?.unwrap();
 assert_eq!(&buf[..n], b"alice");
-# Ok::<(), tpt_hyle::Error>(())
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+The same passphrase opens the store again. A wrong passphrase returns
+`Error::WrongKey` and leaves the file untouched. Losing the passphrase loses the
+data.
 
 ## Status
 
-Phase 1 core: `put`, `get`, `delete`, sync-log cursors (`events_since`),
-Lamport clock, and crash recovery are implemented. Not yet implemented:
-compaction, a key index, `mmap`, and `put_json`/`get_json`.
+Implemented: `put`, `get`, `delete`, batches, sync cursors (`events_since`),
+Lamport clock, crash recovery, compaction (in memory and file), key index,
+`put_json`/`get_json` (feature `json`), encryption at rest, and per-event
+Ed25519 signatures with `public_key()`.
+
+Not implemented: `mmap`, and a way to rotate a node's key without rewriting the
+store.
 
 ## Documentation
 
 - [docs/format.md](../../docs/format.md): the on-disk byte layout.
-- [docs/adr/](../../docs/adr/): design decisions and their reasons.
+- [docs/adr/](../../docs/adr/): design decisions and their reasons. ADR 0013
+  (encryption and single file), ADR 0014 (tombstone collection), and ADR 0015
+  (signed events) are the current ones.
 
 ## License
 

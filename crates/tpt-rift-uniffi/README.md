@@ -4,6 +4,14 @@ UniFFI bindings for tpt-rift. One object, `SyncStore`, is a file-backed replica
 with `open`, `put`, `get`, `delete`, `export_for`, `import_from` and `lamport`.
 Transport is left to the app, as on the web.
 
+`open(path, node_id, passphrase)` derives the store key from the passphrase. A
+wrong passphrase is an error, and the file is left untouched. Losing the
+passphrase loses the data.
+
+Every write is signed by the store's node. The bindings do not yet expose a
+directory of node keys, so `import_from` does not check signatures. A replica
+that needs that check must be built in Rust with `Replica::set_directory`.
+
 ## Generated sources
 
 The Kotlin and Swift sources are in `bindings/`. They are generated from the

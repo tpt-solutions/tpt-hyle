@@ -1,5 +1,8 @@
 # ADR 0002: Record integrity, recovery, and key lookup
 
+> **Superseded in part.** The CRC-32C checksum and the two-segment layout in this ADR were replaced by sealed frames in one file. See [ADR 0013](0013-encryption-and-single-file.md) and [docs/format.md](../format.md). The reasoning about recovery still holds.
+
+
 Status: accepted
 
 ## Context

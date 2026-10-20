@@ -27,7 +27,12 @@ cargo test --workspace
 cargo build -p tpt-hyle --no-default-features --target thumbv7em-none-eabihf
 ```
 
-The MSRV is **1.75**. The core crate must stay `no_std` on its default path.
+The MSRV is **1.75** for `tpt-hyle` and `tpt-rift`, checked in CI. Both must
+stay buildable on it. The core crate must also stay `no_std` on its default
+path. The rest of the workspace (transports, server, bindings) needs a current
+stable toolchain, because its dependencies do. `zeroize` and `base64ct` are
+pinned, and so is `ed25519-dalek`, to keep the first two crates on 1.75. Check
+those pins before you update anything in the tree.
 
 ## Design decisions
 

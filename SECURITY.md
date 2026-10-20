@@ -24,14 +24,29 @@ security bugs:
   an error instead.
 - Recovery that silently discards committed data, or accepts a state record
   that does not match its sync event.
-- Any future sync or transport code that accepts an event without verifying
-  it.
+- Any sync or transport code that accepts an event without verifying its
+  signature when a directory of node keys is in use.
 
-The current format uses CRC-32C. That detects corruption, not tampering. It
-does not protect against an attacker who can rewrite the files. Encryption at
-rest and signed events are open questions in [TODO.md](TODO.md). Until they
-are answered, do not rely on tpt-hyle to keep data confidential or to prove
-its origin.
+Format version 4 seals every frame with XChaCha20-Poly1305 under a key from
+an Argon2id passphrase, and signs every event with the issuing node's Ed25519
+key. A reader without the passphrase learns no key or value. A tampered frame
+fails authentication, and a changed event fails its signature.
+
+These protections have limits:
+
+- The node signing key is derived from the store key. Anyone who can open a
+  store can sign as its node. Signatures prove which store wrote an event, not
+  which person did.
+- The file reveals its size, the number of frames, and when they were written.
+- Client acknowledgements are not signed. A client that lies in an ack can make
+  the hub collect a tombstone that the client has not applied. See
+  [ADR 0014](docs/adr/0014-tombstone-collection.md).
+- A replica without a directory of node keys does not check signatures.
+- Losing the passphrase loses the data. There is no recovery path.
+
+Do not use tpt-hyle as the only protection for data that must stay secret from
+someone who can run code on the machine, and do not treat a signature as proof
+of a person's action.
 
 ## Scope
 

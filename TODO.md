@@ -88,7 +88,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] LAN discovery by UDP broadcast, with unauthenticated announcements ([ADR 0011](docs/adr/0011-lan-discovery.md)). The broadcast path itself is not tested; loopback tests use unicast
 - [x] `tpt-rift-wasm`: wasm-bindgen API over an in-memory store, with IndexedDB persistence in JavaScript (`web/persistence.js`). Tested under Node, not in a browser ([ADR 0010](docs/adr/0010-wasm-bindings.md))
 - [ ] Browser demo: offline web app syncing P2P (the Node demo covers the same calls; no page yet)
-- [ ] Kani harnesses: 5 verified for record decoding, header validation, the CRC claim, and fixed-storage bounds (kani/README.md). Not yet: allocator bounds and segment-offset invariants through compaction
+- [ ] Kani harnesses: 6 verified on the format v4 layout (header, frame header, data and commit decoding, fixed-storage reads and truncation). Run in WSL, see [kani/README.md](kani/README.md). Not yet: allocator bounds, and invariants through compaction and recovery
 - [x] CRDT determinism tests: convergence under random order and duplication for LWW and JSON documents (mutation-checked). Not a machine-checked proof
 
 ## Phase 5: Mobile + ecosystem (Year 5)

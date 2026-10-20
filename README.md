@@ -5,17 +5,17 @@
 `tpt-hyle` is a pure-Rust, append-only key-value/document store whose write log *is* the replication feed.
 `tpt-rift` is a CRDT sync engine that reads that feed directly. No SQLite, no shadow tables, no triggers.
 
-> Status: **Phase 1 core in progress.** The storage engine (`put`, `get`, `delete`, sync cursors, crash recovery) works and is tested. Compaction, sync, and the network layers are not built yet. See [TODO.md](TODO.md) and [spec.txt](spec.txt) (RFC 003).
+> Status: **Pre-alpha.** The storage engine, sync, transports (WebSocket, WebRTC), the reference server, and bindings (wasm, UniFFI) are built and tested. Encryption at rest and signed events are in. The UniFFI Kotlin and Swift bindings are generated but not compiled. Docker is not built. See [TODO.md](TODO.md) and [spec.txt](spec.txt) (RFC 003).
 
 ## Crates
 
 | Crate | Role |
 |---|---|
-| `tpt-hyle` | Core `no_std` micro-store (State + Sync segments) |
+| `tpt-hyle` | Core store: one encrypted, signed, append-only file; `no_std` core |
 | `tpt-rift` | CRDT sync engine, `Transport` trait |
 | `tpt-hyle-rift` | Unified API: `open()` / `connect()` |
 | `tpt-rift-server` | Self-hostable reference sync server |
-| `tpt-hyle-cli` | Inspect / dump-sync-log / verify (compact pending) |
+| `tpt-hyle-cli` | Inspect, dump, verify, print public key, compact |
 | `tpt-rift-transport-ws` | WebSocket transport |
 | `tpt-rift-transport-webrtc` | WebRTC peer-to-peer transport |
 | `tpt-rift-wasm` | WebAssembly bindings (IndexedDB backing) |

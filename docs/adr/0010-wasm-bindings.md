@@ -1,5 +1,8 @@
 # ADR 0010: WebAssembly bindings without IndexedDB
 
+> **Updated.** The store is encrypted now. `Store::new` and `Store::load` take a passphrase, and `save` returns sealed bytes. See [ADR 0013](0013-encryption-and-single-file.md).
+
+
 Status: accepted
 
 ## Context

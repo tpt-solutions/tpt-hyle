@@ -1,5 +1,8 @@
 # ADR 0005: Batched commits and commit records
 
+> **Superseded in part.** A commit is now one commit frame with a count and digest, and one fsync. See [ADR 0013](0013-encryption-and-single-file.md). The batch semantics here still hold.
+
+
 Status: accepted
 
 ## Context
