@@ -19,8 +19,8 @@ fn read(db: &mut Database, key: &[u8]) -> Option<Vec<u8>> {
 #[tokio::test]
 async fn resume_recovers_after_the_other_side_compacts() {
     let dir = scratch("compact");
-    let mut a = open(dir.join("a"), 1).unwrap();
-    let mut b = open(dir.join("b"), 2).unwrap();
+    let mut a = open(dir.join("a"), 1, b"test passphrase").unwrap();
+    let mut b = open(dir.join("b"), 2, b"test passphrase").unwrap();
     a.store().put(b"k", b"v1").unwrap();
     a.store().put(b"k", b"v2").unwrap();
 

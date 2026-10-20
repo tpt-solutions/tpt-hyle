@@ -680,12 +680,13 @@ open class SyncStore: SyncStoreProtocol, @unchecked Sendable {
      * Opens or creates the store at `path`. `node_id` is a decimal `u128`, and
      * each device needs its own.
      */
-public static func `open`(path: String, nodeId: String)throws  -> SyncStore  {
+public static func `open`(path: String, nodeId: String, passphrase: String)throws  -> SyncStore  {
     return try  FfiConverterTypeSyncStore_lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
         uniffiCallStatus in
     uniffi_tpt_rift_uniffi_fn_constructor_syncstore_open(
         FfiConverterString.lower(path),
-        FfiConverterString.lower(nodeId),uniffiCallStatus
+        FfiConverterString.lower(nodeId),
+        FfiConverterString.lower(passphrase),uniffiCallStatus
     )
 })
 }
@@ -969,7 +970,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_tpt_rift_uniffi_checksum_method_syncstore_put() != 17640) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_tpt_rift_uniffi_checksum_constructor_syncstore_open() != 18877) {
+    if (uniffi_tpt_rift_uniffi_checksum_constructor_syncstore_open() != 10186) {
         return InitializationResult.apiChecksumMismatch
     }
 

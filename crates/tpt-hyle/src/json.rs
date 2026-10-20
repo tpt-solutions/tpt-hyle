@@ -5,7 +5,7 @@ use alloc::string::ToString;
 
 use crate::{ChangeEvent, Error, Hyle, Storage};
 
-impl<St: Storage, Sy: Storage> Hyle<St, Sy> {
+impl<S: Storage> Hyle<S> {
     /// Serializes `value` as JSON and stores it under `key`.
     pub fn put_json<T: serde::Serialize>(
         &mut self,

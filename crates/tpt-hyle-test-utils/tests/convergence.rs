@@ -1,22 +1,21 @@
-//! Convergence: replicas that wrote independently end up identical, no matter
-//! the order in which they receive each other's changes, or how often.
+//! Convergence: replicas that wrote independently end up identical, whatever
+//! the order in which they receive each other's changes, and however often.
 
 use std::collections::BTreeMap;
 
 use proptest::prelude::*;
-use tpt_hyle::{Hyle, VecStorage};
+use tpt_hyle::VecStorage;
 use tpt_hyle_test_utils::strategies::op;
-use tpt_hyle_test_utils::Op;
+use tpt_hyle_test_utils::{mem_store, Op};
 use tpt_rift::{Delta, Replica};
 
-type R = Replica<VecStorage, VecStorage>;
+type R = Replica<VecStorage>;
 
-/// Sentinel peer id that matches no real event, so an export includes
-/// everything.
+/// Sentinel peer id that matches no real event, so an export includes everything.
 const NO_PEER: u128 = u128::MAX;
 
 fn replica(node: u128) -> R {
-    Replica::new(Hyle::open(VecStorage::new(), VecStorage::new(), node).unwrap())
+    Replica::new(mem_store(node))
 }
 
 fn read_all(r: &mut R) -> BTreeMap<Vec<u8>, Vec<u8>> {
@@ -52,8 +51,7 @@ proptest! {
             }
         }
 
-        // Phase 2: every replica exports its full log, as it would on
-        // reconnect.
+        // Phase 2: every replica exports its full log, as it would on reconnect.
         let deltas: Vec<Delta> = replicas
             .iter_mut()
             .map(|r| {
@@ -63,7 +61,7 @@ proptest! {
             .collect::<Result<_, _>>()?;
 
         // Reference: per key, the change with the greatest (lamport, node_id)
-        // decides the result. A tombstone there means the key is absent.
+        // decides. A tombstone there means the key is absent.
         let mut winners: BTreeMap<Vec<u8>, (u64, u128, bool, Vec<u8>)> = BTreeMap::new();
         for d in &deltas {
             for ch in &d.changes {
@@ -83,9 +81,8 @@ proptest! {
             .map(|(k, (_, _, _, v))| (k, v))
             .collect();
 
-        // Phase 3: each replica receives all deltas, in a scrambled order,
-        // with extra duplicates, and then once more in full order so that
-        // every change is guaranteed to arrive at least once.
+        // Phase 3: each replica receives every delta in a scrambled order, with
+        // duplicates, then once more in order, so each change arrives at least once.
         for (i, r) in replicas.iter_mut().enumerate() {
             let n = deltas.len();
             for &s in &schedule {

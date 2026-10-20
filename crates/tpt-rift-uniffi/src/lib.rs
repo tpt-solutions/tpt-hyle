@@ -18,7 +18,7 @@ use tpt_rift::{Delta, Replica};
 
 uniffi::setup_scaffolding!();
 
-type Store = Replica<tpt_hyle::FileStorage, tpt_hyle::FileStorage>;
+type Store = Replica<tpt_hyle::FileStorage>;
 
 /// Errors from the store. Each carries a readable message for the app to show
 /// or log.
@@ -63,9 +63,9 @@ impl SyncStore {
     /// Opens or creates the store at `path`. `node_id` is a decimal `u128`, and
     /// each device needs its own.
     #[uniffi::constructor]
-    pub fn open(path: String, node_id: String) -> Result<Arc<Self>, SyncError> {
+    pub fn open(path: String, node_id: String, passphrase: String) -> Result<Arc<Self>, SyncError> {
         let node = parse_node(&node_id)?;
-        let db = Hyle::open_file(path, node).map_err(store_err)?;
+        let db = Hyle::open_file(path, node, passphrase.as_bytes()).map_err(store_err)?;
         Ok(Arc::new(Self {
             inner: Mutex::new(Replica::new(db)),
         }))

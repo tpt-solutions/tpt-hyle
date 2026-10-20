@@ -20,3 +20,4 @@ bytes = "1"
 
 [dev-dependencies]
 tpt-hyle = { workspace = true, features = ["std"] }
+tpt-hyle-test-utils = { workspace = true }

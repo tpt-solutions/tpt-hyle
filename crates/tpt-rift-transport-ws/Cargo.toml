@@ -20,3 +20,4 @@ futures-util = "0.3"
 
 [dev-dependencies]
 tpt-hyle = { workspace = true, features = ["std"] }
+tpt-hyle-test-utils = { workspace = true }

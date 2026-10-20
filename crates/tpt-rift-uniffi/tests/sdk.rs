@@ -1,5 +1,7 @@
 use tpt_rift_uniffi::{SyncError, SyncStore};
 
+const PASS: &str = "test passphrase";
+
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("tpt-rift-uniffi-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -10,8 +12,18 @@ fn scratch(name: &str) -> std::path::PathBuf {
 #[test]
 fn two_devices_sync_through_the_sdk_surface() {
     let dir = scratch("sync");
-    let phone = SyncStore::open(dir.join("phone").display().to_string(), "1".into()).unwrap();
-    let laptop = SyncStore::open(dir.join("laptop").display().to_string(), "2".into()).unwrap();
+    let phone = SyncStore::open(
+        dir.join("phone").display().to_string(),
+        "1".into(),
+        PASS.into(),
+    )
+    .unwrap();
+    let laptop = SyncStore::open(
+        dir.join("laptop").display().to_string(),
+        "2".into(),
+        PASS.into(),
+    )
+    .unwrap();
 
     phone
         .put(b"note".to_vec(), b"from the phone".to_vec())
@@ -40,11 +52,11 @@ fn data_survives_reopening_the_store() {
     let dir = scratch("reopen");
     let path = dir.join("db").display().to_string();
     {
-        let s = SyncStore::open(path.clone(), "7".into()).unwrap();
+        let s = SyncStore::open(path.clone(), "7".into(), PASS.into()).unwrap();
         s.put(b"k".to_vec(), b"kept".to_vec()).unwrap();
         assert!(s.delete(b"gone".to_vec()).is_ok());
     }
-    let s = SyncStore::open(path, "7".into()).unwrap();
+    let s = SyncStore::open(path, "7".into(), PASS.into()).unwrap();
     assert_eq!(s.get(b"k".to_vec()).unwrap().as_deref(), Some(&b"kept"[..]));
     assert_eq!(s.lamport().unwrap(), 1);
 }
@@ -54,10 +66,10 @@ fn malformed_input_is_an_error_not_a_panic() {
     let dir = scratch("bad");
     let path = dir.join("db").display().to_string();
     assert!(matches!(
-        SyncStore::open(path.clone(), "not a number".into()),
+        SyncStore::open(path.clone(), "not a number".into(), PASS.into()),
         Err(SyncError::Invalid { .. })
     ));
-    let s = SyncStore::open(path, "3".into()).unwrap();
+    let s = SyncStore::open(path, "3".into(), PASS.into()).unwrap();
     assert!(matches!(
         s.import_from(b"junk".to_vec()),
         Err(SyncError::Invalid { .. })

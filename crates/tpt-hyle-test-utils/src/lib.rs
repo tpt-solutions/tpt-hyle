@@ -6,16 +6,16 @@
 
 #![forbid(unsafe_code)]
 
-use tpt_hyle::{Hyle, VecStorage};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use tpt_hyle::{Hyle, Key, VecStorage};
 
 /// A store backed entirely by memory. Nothing touches the disk.
-pub type MemStore = Hyle<VecStorage, VecStorage>;
+/// The test key. Real stores take a key from a passphrase or a key store.
+pub const TEST_KEY: [u8; 32] = [0x5a; 32];
 
-/// Opens an empty in-memory store for `node_id`.
-pub fn mem_store(node_id: u128) -> MemStore {
-    Hyle::open(VecStorage::new(), VecStorage::new(), node_id)
-        .expect("opening an empty in-memory store cannot fail")
-}
+/// The in-memory store used by the tests.
+pub type MemStore = Hyle<VecStorage>;
 
 /// One mutation, for driving a store and a reference model in lockstep.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,4 +50,27 @@ pub mod strategies {
             1 => key().prop_map(Op::Delete),
         ]
     }
+}
+
+static SESSIONS: AtomicU64 = AtomicU64::new(1);
+
+/// A session prefix that is different on every call, as the store requires for
+/// every open. The counter is process-wide, so two opens never share one.
+pub fn fresh_session() -> [u8; 16] {
+    let mut out = [0u8; 16];
+    out[..8].copy_from_slice(&SESSIONS.fetch_add(1, Ordering::SeqCst).to_le_bytes());
+    out
+}
+
+/// Opens an empty in-memory store for `node_id`, with the test key and a fresh
+/// session.
+pub fn mem_store(node_id: u128) -> MemStore {
+    reopen_mem(VecStorage::new(), node_id)
+}
+
+/// Opens an in-memory store over existing bytes, with a fresh session. Used to
+/// reopen a store in a test.
+pub fn reopen_mem(storage: VecStorage, node_id: u128) -> MemStore {
+    Hyle::open_with_session(storage, node_id, Key::from_bytes(TEST_KEY), fresh_session())
+        .expect("reopening a store with the test key cannot fail")
 }

@@ -15,9 +15,12 @@ repository.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-tpt-hyle = { workspace = true, features = ["alloc"] }
+tpt-hyle = { workspace = true, features = ["std"] }
 tpt-rift = { workspace = true }
 wasm-bindgen = "0.2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

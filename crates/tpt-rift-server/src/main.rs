@@ -17,7 +17,10 @@ async fn main() -> ExitCode {
     let result: Result<(), Box<dyn std::error::Error>> = match args.first().map(String::as_str) {
         Some("serve") => match args.get(1) {
             Some(path) => match load_config(&PathBuf::from(path)) {
-                Ok(config) => run(config).await,
+                Ok(config) => match std::env::var("TPT_HUB_PASSPHRASE") {
+                    Ok(pass) => run(config, pass.as_bytes()).await,
+                    Err(_) => Err("set TPT_HUB_PASSPHRASE to the hub store passphrase".into()),
+                },
                 Err(e) => Err(Box::new(e)),
             },
             None => Err("usage: tpt-rift-server serve <config.json>".into()),

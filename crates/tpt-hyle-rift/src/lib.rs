@@ -6,7 +6,7 @@
 //! use tpt_rift::MockTransport;
 //!
 //! # async fn demo() -> Result<(), tpt_rift::RiftError> {
-//! let mut db = open("app_data", 1)?;
+//! let mut db = open("app_data", 1, b"a passphrase")?;
 //! let (transport, _peer_end) = MockTransport::pair();
 //! let mut sync = connect(&mut db, 2, transport);
 //! sync.resume().await?;
@@ -27,7 +27,7 @@ pub const DEFAULT_MAX_EVENTS: usize = 4096;
 
 /// A local, file-backed replica. Use it for reads and writes, as with
 /// [`tpt_hyle::Hyle`].
-pub type Database = Replica<FileStorage, FileStorage>;
+pub type Database = Replica<FileStorage>;
 
 /// Wakes a running sync loop so it syncs now instead of at the next tick.
 ///
@@ -56,8 +56,12 @@ impl Trigger {
 ///
 /// Files are created beside `path`. See [`tpt_hyle::Hyle::open_file`]. Each
 /// node id must be used by one writer only.
-pub fn open(path: impl AsRef<Path>, node_id: u128) -> Result<Database, RiftError> {
-    Ok(Replica::new(Hyle::open_file(path, node_id)?))
+pub fn open(
+    path: impl AsRef<Path>,
+    node_id: u128,
+    passphrase: &[u8],
+) -> Result<Database, RiftError> {
+    Ok(Replica::new(Hyle::open_file(path, node_id, passphrase)?))
 }
 
 /// A sync session with one peer.

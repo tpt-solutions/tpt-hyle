@@ -1,13 +1,14 @@
 use std::time::Duration;
 
-use tpt_hyle::{Hyle, VecStorage};
+use tpt_hyle::VecStorage;
+use tpt_hyle_test_utils::mem_store;
 use tpt_rift::{sync_round, PeerLink, Replica};
 use tpt_rift_transport_webrtc::{accept, create_offer};
 
-type R = Replica<VecStorage, VecStorage>;
+type R = Replica<VecStorage>;
 
 fn replica(node: u128) -> R {
-    Replica::new(Hyle::open(VecStorage::new(), VecStorage::new(), node).unwrap())
+    Replica::new(mem_store(node))
 }
 
 #[tokio::test]

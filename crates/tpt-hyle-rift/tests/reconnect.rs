@@ -31,8 +31,8 @@ fn fast_policy(interval: Duration) -> SyncPolicy {
 #[tokio::test]
 async fn a_failed_connection_is_retried_and_converges() {
     let dir = scratch("retry");
-    let mut a = open(dir.join("a"), 1).unwrap();
-    let mut b = open(dir.join("b"), 2).unwrap();
+    let mut a = open(dir.join("a"), 1, b"test passphrase").unwrap();
+    let mut b = open(dir.join("b"), 2, b"test passphrase").unwrap();
     b.store().put(b"from-b", b"1").unwrap();
     a.store().put(b"from-a", b"1").unwrap();
 
@@ -77,8 +77,8 @@ async fn a_failed_connection_is_retried_and_converges() {
 #[tokio::test]
 async fn a_trigger_wakes_the_loop_long_before_its_timer() {
     let dir = scratch("trigger");
-    let mut a = open(dir.join("a"), 1).unwrap();
-    let mut b = open(dir.join("b"), 2).unwrap();
+    let mut a = open(dir.join("a"), 1, b"test passphrase").unwrap();
+    let mut b = open(dir.join("b"), 2, b"test passphrase").unwrap();
 
     let (a_end, b_end) = MockTransport::pair();
     let a_end = std::cell::Cell::new(Some(a_end));

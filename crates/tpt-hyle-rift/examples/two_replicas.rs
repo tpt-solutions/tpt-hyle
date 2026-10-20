@@ -22,8 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut laptop = open(dir.join("laptop"), 1)?;
-    let mut phone = open(dir.join("phone"), 2)?;
+    let mut laptop = open(dir.join("laptop"), 1, b"example passphrase")?;
+    let mut phone = open(dir.join("phone"), 2, b"example passphrase")?;
 
     // Both sides write while offline.
     laptop.store().put(b"note:1", b"written on the laptop")?;

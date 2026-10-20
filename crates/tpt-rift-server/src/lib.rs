@@ -41,13 +41,14 @@ pub const DEFAULT_MESSAGES_PER_SECOND: u32 = 200;
 /// Events read per export. A longer backlog goes out over several polls.
 const EXPORT_BATCH: usize = 1024;
 
-pub type Hub = Arc<Mutex<Replica<FileStorage, FileStorage>>>;
+pub type Hub = Arc<Mutex<Replica<FileStorage>>>;
 
 /// Server configuration, as read from JSON.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Base path of the hub store, as passed to `Hyle::open_file`.
+    /// Path of the hub store file. The passphrase is read from the
+    /// `TPT_HUB_PASSPHRASE` environment variable, never from this file.
     pub store: PathBuf,
     /// Address to listen on, for example `127.0.0.1:8080`.
     pub listen: String,
@@ -380,9 +381,9 @@ pub async fn serve_connection(
 }
 
 /// Runs the server until the listener fails.
-pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(config: Config, passphrase: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let (hub_node, access) = Access::from_config(&config)?;
-    let store = Hyle::open_file(&config.store, hub_node)?;
+    let store = Hyle::open_file(&config.store, hub_node, passphrase)?;
     let hub: Hub = Arc::new(Mutex::new(Replica::new(store)));
     let listener = TcpListener::bind(&config.listen).await?;
     let poll = Duration::from_millis(config.poll_ms);

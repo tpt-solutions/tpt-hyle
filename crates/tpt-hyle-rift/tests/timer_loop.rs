@@ -8,8 +8,8 @@ async fn timer_loop_converges_two_replicas_then_stops_on_signal() {
     let dir = std::env::temp_dir().join(format!("tpt-hyle-rift-timer-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let mut a = open(dir.join("a"), 1).unwrap();
-    let mut b = open(dir.join("b"), 2).unwrap();
+    let mut a = open(dir.join("a"), 1, b"test passphrase").unwrap();
+    let mut b = open(dir.join("b"), 2, b"test passphrase").unwrap();
     a.store().put(b"from-a", b"1").unwrap();
     b.store().put(b"from-b", b"2").unwrap();
 

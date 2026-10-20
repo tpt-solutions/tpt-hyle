@@ -1,190 +1,167 @@
-# On-disk format (version 2)
+# On-disk format, version 3
 
-This describes the bytes `tpt-hyle` writes. The code in
-`crates/tpt-hyle/src/format.rs` and `crates/tpt-hyle/src/store.rs` is the
-reference implementation. If the two disagree, fix whichever is wrong and
-bump `FORMAT_VERSION` for any change to existing bytes.
+Written for: engineers who need to read, verify, or port a store file.
 
-## Conventions
+A store is one file. It holds a 128-byte header followed by frames. Every frame
+is sealed with XChaCha20-Poly1305, so the file reveals neither keys nor values
+without the passphrase. All integers are little-endian. The code is
+`crates/tpt-hyle/src/format.rs`; this document must match it.
 
-- All integers are **little-endian**.
-- Offsets are **absolute byte offsets from the start of a segment**, header
-  included.
-- Checksums are **CRC-32C** (Castagnoli, polynomial `0x1EDC6F41`, reflected).
-  The check value of `"123456789"` is `0xE3069283`.
-- `key_hash` is **FNV-1a 64** over the key bytes. It is a filter, not an
-  identity. Full keys are always compared.
+## Header (128 bytes)
 
-## Store layout
+| Offset | Length | Field                | Notes                                          |
+|-------:|-------:|----------------------|------------------------------------------------|
+| 0      | 4      | magic                | `HYLG`                                         |
+| 4      | 2      | version              | `3`                                            |
+| 6      | 2      | reserved             | must be zero                                   |
+| 8      | 16     | node id              | `u128`, fixed for the life of the store        |
+| 24     | 4      | generation           | `u32`, incremented by compaction               |
+| 28     | 16     | salt                 | Argon2id salt; all zero for a raw key          |
+| 44     | 24     | check nonce          | see *Nonces*                                   |
+| 68     | 34     | key-check value      | sealed `"tpt-hyle key check"` (18 + 16 tag)    |
+| 102    | 26     | reserved             | must be zero                                   |
 
-A store is two append-only segments:
+The key-check value's associated data is bytes 0..68. A changed node id,
+generation, salt, or magic therefore fails the key check, not just the field
+that changed.
 
-| Segment | Magic  | Contents                                  |
-|---------|--------|-------------------------------------------|
-| State   | `HYST` | Variable-length records: key and value    |
-| Sync    | `HYSY` | Fixed 56-byte `ChangeEvent` records       |
+Opening a store checks, in order: magic, version, reserved bytes, node id
+(`NodeIdMismatch`), salt (for a passphrase open, `WrongKey`), and the key-check
+value (`WrongKey`). A wrong key never truncates or modifies the file.
 
-Each segment starts with a 32-byte header. The `node_id` is the same in both
-headers.
+## Keys
 
-### Segment header (32 bytes)
+- **Passphrase:** the key is Argon2id (`argon2` 0.5, default parameters) over
+  the passphrase, with the header salt. The salt is random per store and is
+  created once. The same passphrase reopens the store.
+- **Raw key:** 32 bytes supplied by the caller. The salt is zero.
 
-| Offset | Size | Field          | Value                              |
-|--------|------|----------------|------------------------------------|
-| 0      | 4    | magic          | `HYST` or `HYSY`                   |
-| 4      | 2    | version        | `2`                                |
-| 6      | 2    | reserved       | `0`                                |
-| 8      | 16   | node_id        | `u128`, see [ADR 0001](adr/0001-node-id-width.md) |
-| 24     | 4    | generation     | `u32`. Starts at `0`, incremented by each compaction |
-| 28     | 4    | crc32c         | CRC-32C of bytes `0..28`           |
+Argon2id is deliberately slow. Opening a store costs one derivation.
 
-A reader rejects the segment if the magic, CRC, version, or reserved bytes
-are wrong. The State and Sync segments of one store must have the same
-`generation`, or the store refuses to open.
+## Frames
 
-### State record (variable length)
+Each frame is a 29-byte frame header followed by a sealed payload.
 
-| Offset | Size      | Field      | Notes                                   |
-|--------|-----------|------------|-----------------------------------------|
-| 0      | 4         | crc32c     | CRC-32C of bytes `4..10+key_len+value_len` |
-| 4      | 2         | key_len    | `1..=65535`                             |
-| 6      | 4         | value_len  | `0..=u32::MAX`. `0` for tombstones      |
-| 10     | key_len   | key        |                                         |
-| 10+k   | value_len | value      |                                         |
+| Offset | Length | Field       | Notes                                              |
+|-------:|-------:|-------------|----------------------------------------------------|
+| 0      | 4      | sealed_len  | length of the payload, tag included; 16 ≤ len ≤ 2^26 |
+| 4      | 1      | kind        | `1` data, `2` commit; anything else is invalid     |
+| 5      | 24     | nonce       | the nonce the payload was sealed with              |
+| 29     | n      | sealed      | ciphertext followed by the 16-byte Poly1305 tag    |
 
-The key lives here, not in the sync record. That is what lets a hash
-collision be told apart from a real match.
+The associated data for the payload is the kind byte followed by `sealed_len`
+(5 bytes). Changing the kind or length fails authentication.
 
-### Sync record (fixed 56 bytes)
+Length bounds are checked before anything is read or allocated.
 
-| Offset | Size | Field          | Notes                                              |
-|--------|------|----------------|----------------------------------------------------|
-| 0      | 4    | crc32c         | CRC-32C of bytes `4..56`                           |
-| 4      | 8    | key_hash       | FNV-1a 64 of the key                               |
-| 12     | 8    | lamport        | Lamport timestamp of the write                     |
-| 20     | 16   | node_id        | Node that issued the write                         |
-| 36     | 8    | payload_offset | Offset of the state record in the State Segment    |
-| 44     | 4    | payload_len    | Value length. Must equal the state record's        |
-| 48     | 2    | key_len        | Must equal the state record's                      |
-| 50     | 1    | flags          | bit 0 = tombstone, bit 1 = commit record. Other bits must be `0` |
-| 51     | 5    | padding        | `0`                                                |
+### Data frame
 
-Total 56 bytes. Conflict order is `(lamport, node_id)`. This replaces the
-spec's single `vector_clock` field ([TODO.md](../TODO.md), decisions).
+One write or delete. The plaintext is:
 
-Logical `ChangeEvent` in Rust:
+| Offset | Length | Field       | Notes                                   |
+|-------:|-------:|-------------|-----------------------------------------|
+| 0      | 8      | lamport     | Lamport timestamp of the write          |
+| 8      | 16     | node id     | node that originated the write          |
+| 24     | 1      | flags       | bit 0 = tombstone (delete)              |
+| 25     | 2      | key_len     | at most `MAX_KEY_LEN` (65535)          |
+| 27     | 4      | value_len   |                                         |
+| 31     | key_len | key        |                                         |
+| …      | value_len | value    | empty for a tombstone                   |
 
-```rust
-pub struct ChangeEvent {
-    pub key_hash: u64,
-    pub key_len: u16,
-    pub lamport: u64,
-    pub node_id: u128,
-    pub payload_offset: u64,
-    pub payload_len: u32,
-    pub tombstone: bool,
-}
-```
+The plaintext must be exactly `31 + key_len + value_len` bytes. Any other
+length is rejected.
 
-## File layout
+### Commit frame
 
-A file-backed store called `<base>` uses three paths:
+Closes a batch. The plaintext is 60 bytes:
 
-| Path                        | Role                                              |
-|-----------------------------|---------------------------------------------------|
-| `<base>.sync`               | The current Sync Segment. Its header names the generation. |
-| `<base>.state.<generation>` | The State Segment of that generation.             |
-| `<base>.sync.tmp`           | Scratch file during compaction. Never valid on its own. |
+| Offset | Length | Field    | Notes                                                    |
+|-------:|-------:|----------|----------------------------------------------------------|
+| 0      | 8      | lamport  | highest Lamport clock at commit                          |
+| 8      | 16     | node id  | node that committed                                      |
+| 24     | 4      | count    | number of data frames in the batch                       |
+| 28     | 32     | digest   | SHA-256 over the full bytes of the batch's data frames   |
 
-Only the files of the current generation are live. On open, files for other
-generations and any `.sync.tmp` are deleted.
+The digest covers each data frame's complete bytes: frame header, nonce, and
+sealed payload. Nothing in the batch can change without the digest failing.
 
-## Operations
+## Batches and durability
 
-**Batches.** Every write belongs to a batch. A batch appends its state and
-sync records without flushing. `commit` then writes, in order:
+A batch appends its data frames without flushing, then appends one commit frame
+and flushes once. The commit frame's count and digest bind the whole batch, so
+a batch is committed only when every one of its frames is on disk. One fsync per
+commit is therefore sufficient.
 
-1. Flush the State Segment. Every state record of the batch is durable.
-2. Flush the Sync Segment. Every data record of the batch is durable.
-3. Append one **commit record** to the Sync Segment, then flush it.
+A batch that is dropped without a commit truncates the file back to where it
+began.
 
-A commit record closes a batch. It carries the clock at commit time. A batch
-with no writes commits nothing, unless it is forced, which writes a commit
-record so the clock survives a restart.
+## Recovery
 
-A batch dropped without commit is rolled back: both segments are truncated to
-their lengths when the batch started.
+On open, the file is scanned from the header:
 
-**put(key, value)** is a batch of one.
+1. Each frame must have a valid frame header and authenticate. The first frame
+   that does not is the end of the scan.
+2. Data frames accumulate. A commit frame must match the accumulated count and
+   digest, or the file is `Corrupt`. A commit that verifies makes the batch
+   committed.
+3. Bytes after the last committed batch are an uncommitted tail. Recovery
+   truncates them.
+4. If a valid frame appears *after* the scan stopped, the damage is inside
+   committed data. Recovery returns `Corrupt` and does not truncate. Truncating
+   would discard data that was committed.
 
-**delete(key)** is a tombstone written in a batch. It writes nothing and
-returns `false` if the key is absent.
+Recovery therefore removes a torn write and refuses to remove anything that was
+committed.
 
-**get(key)** scans the Sync Segment newest-first. The first event whose
-`key_hash` and `key_len` match, and whose state record has the same key, is
-the answer. A tombstone means the key is absent.
+## Nonces
 
-**Sync cursor.** A cursor is an absolute offset in the Sync Segment, always
-`32 + n*56`. A peer that has processed events up to `c` resumes at `c`. The
-cursor returned with each event is the offset *after* that event.
+A nonce is 24 bytes: a 16-byte random session prefix, then a `u64` counter.
 
-A cursor is only meaningful together with the generation it was taken from.
-Compaction changes the log, so a peer must store `(generation, cursor)`. If
-the generation differs, the peer must resynchronize from the header.
+- The session prefix is drawn from the system random source at each open.
+- The counter starts at zero for each open and only increases. It is not
+  rewound when a batch rolls back.
 
-**Compaction** produces the next generation. It keeps the last event for each
-key, tombstones included, in its original order. Each kept event keeps its
-original `lamport` and `node_id`. The new store's clock is the old clock, so
-it never moves backwards. Superseded values and events are dropped.
+Reusing a nonce under one key exposes plaintext, so the counter must never go
+backwards. A rolled-back batch consumes its nonces.
 
-Tombstones are kept, so a deletion still reaches peers that never saw the
-live value. Removing old tombstones is an open question
-(see [TODO.md](../TODO.md)).
+The key-check value uses the session-independent nonce `session ‖ u64::MAX`,
+which no data frame reaches.
 
-The file swap is in [ADR 0003](adr/0003-compaction-and-generations.md). Its
-commit point is one atomic rename of `<base>.sync.tmp` over `<base>.sync`.
+## Compaction and generations
 
-## Recovery on open
+Compaction writes the live state into a new file, with the generation
+incremented, and keeps the original node ids. It writes to `<path>.tmp` and
+renames over the original, so a crash leaves either the old file or the new one.
+A leftover `<path>.tmp` is harmless and is replaced by the next compaction.
 
-Recovery works in two passes over the Sync Segment:
+A peer's sync cursor is `(generation, offset)`. It is valid only for the
+generation it was taken from. A cursor from an older generation is detectably
+stale, so the holder must not resume from its offset.
 
-1. Find the **last commit record** whose CRC is valid. If there is none, the
-   store is empty and both segments are truncated to their headers.
-2. Check every record from the header up to that commit record. A damaged
-   record there is committed data, so open fails with `Corrupt`. A data
-   record is valid only if its state record is intact (in bounds, CRC
-   matches, lengths agree, and `FNV-1a(key) == key_hash`).
-3. Truncate the Sync Segment to just after that commit record, and the State
-   Segment to the end of the last data record it covers. Everything after the
-   commit record belongs to a batch that never committed. Torn records and
-   orphaned state bytes are removed.
-4. The clock resumes from the largest `lamport` seen in a valid data or
-   commit record.
-5. Before any of this, the store checks that the State and Sync segments
-   have the same `generation`. If they differ, it refuses to open.
+## Errors
 
-Consequence: a torn or unfinished batch disappears whole. Damage to any
-committed record is reported, never silently dropped.
+| Error                      | Meaning                                             |
+|----------------------------|-----------------------------------------------------|
+| `WrongKey`                 | passphrase or key does not match; file is untouched |
+| `NodeIdMismatch`           | file belongs to a different node id                 |
+| `Corrupt(reason)`          | damage inside committed data, or a malformed header |
+| `Crypto(reason)`           | key derivation or randomness failed                 |
 
-Reads also verify the state record checksum. A value damaged after open
-returns `Corrupt` from `get`.
+## Verification
 
-## Limits
+- Kani proofs cover header and frame decoding never panicking, frame lengths
+  staying in bounds, data and commit decoding never panicking, and fixed-storage
+  reads and truncation staying in bounds. Harness names are in `kani/README.md`.
+- Engine tests cover torn commits, uncommitted tails, damage inside committed
+  data, wrong keys, nonce continuity across rollbacks, and compaction.
+- The `tpt-hyle-cli verify` command authenticates every frame of a store.
 
-| Item       | Limit                                                   |
-|------------|---------------------------------------------------------|
-| Key        | 1 to 65535 bytes                                        |
-| Value      | 0 to `u32::MAX` bytes, and no larger than the backend allows |
-| Node id    | `u128`                                                  |
-| Lamport    | `u64`. Writes fail with `LamportOverflow` at the top    |
-| Segment    | `u64` bytes                                             |
+## Not in version 3
 
-## Versioning
-
-`FORMAT_VERSION = 2`. A reader rejects any other version with `Corrupt`.
-
-Version 2 added commit records and batches. Version 1 stores cannot be opened.
-Nothing has been released yet, so no migration tool exists. Once a release
-ships, any further change needs a migration path.
-Migration tooling is not written yet. See the open question on schema and
-migration in [TODO.md](../TODO.md).
+- No per-event signatures. Authorship is the node id, and any holder of the key
+  can write as any node. Signed events are planned.
+- No tombstone collection. Compaction keeps the latest event per key, including
+  tombstones, so a deleted key stays deleted on peers that have not yet seen the
+  delete. Tombstone garbage collection with peer acknowledgements is planned.
+- The format does not hide the number of frames, their sizes, or their timing.
+  Those leak through the file size and the frame count.

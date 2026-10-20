@@ -93,8 +93,8 @@ fn assemble(mut leaves: Vec<(String, Value)>) -> Option<Value> {
 
 /// Stores `value` as document `doc`. Only fields that changed are written,
 /// all in one batch.
-pub fn put_doc<St: Storage, Sy: Storage>(
-    store: &mut Hyle<St, Sy>,
+pub fn put_doc<S: Storage>(
+    store: &mut Hyle<S>,
     doc: &[u8],
     value: &Value,
 ) -> Result<(), RiftError> {
@@ -119,10 +119,7 @@ pub fn put_doc<St: Storage, Sy: Storage>(
 }
 
 /// Reads document `doc`, or `None` if no field of it is live.
-pub fn get_doc<St: Storage, Sy: Storage>(
-    store: &mut Hyle<St, Sy>,
-    doc: &[u8],
-) -> Result<Option<Value>, RiftError> {
+pub fn get_doc<S: Storage>(store: &mut Hyle<S>, doc: &[u8]) -> Result<Option<Value>, RiftError> {
     let prefix = doc_prefix(doc)?;
     let mut leaves = Vec::new();
     for (key, bytes) in store.live_entries(&prefix)? {
@@ -136,10 +133,7 @@ pub fn get_doc<St: Storage, Sy: Storage>(
 }
 
 /// Deletes every field of document `doc`.
-pub fn delete_doc<St: Storage, Sy: Storage>(
-    store: &mut Hyle<St, Sy>,
-    doc: &[u8],
-) -> Result<(), RiftError> {
+pub fn delete_doc<S: Storage>(store: &mut Hyle<S>, doc: &[u8]) -> Result<(), RiftError> {
     let prefix = doc_prefix(doc)?;
     let keys: Vec<Vec<u8>> = store
         .live_entries(&prefix)?

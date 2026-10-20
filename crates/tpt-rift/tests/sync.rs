@@ -1,10 +1,26 @@
-use tpt_hyle::{Hyle, VecStorage};
+use tpt_hyle::{Hyle, Key, VecStorage};
 use tpt_rift::{sync_round, MockTransport, PeerLink, Replica, RiftError, RoundStats};
 
-type R = Replica<VecStorage, VecStorage>;
+type R = Replica<VecStorage>;
+
+static SESSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// A store with a fresh session, so no two opens share nonces.
+fn fresh_hyle(node: u128) -> Hyle<VecStorage> {
+    let mut session = [0u8; 16];
+    let n = SESSIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    session[..8].copy_from_slice(&n.to_le_bytes());
+    Hyle::open_with_session(
+        VecStorage::new(),
+        node,
+        Key::from_bytes([0x5a; 32]),
+        session,
+    )
+    .unwrap()
+}
 
 fn replica(node: u128) -> R {
-    Replica::new(Hyle::open(VecStorage::new(), VecStorage::new(), node).unwrap())
+    Replica::new(fresh_hyle(node))
 }
 
 fn read(r: &mut R, key: &[u8]) -> Option<Vec<u8>> {
@@ -140,7 +156,7 @@ async fn stale_generation_is_reported_and_recovers_after_reset() {
     let old = std::mem::replace(&mut a, replica(1));
     let compacted = old
         .into_store()
-        .compact_into(VecStorage::new(), VecStorage::new())
+        .compact_into(VecStorage::new(), [0xc0; 16])
         .unwrap();
     let mut a = Replica::new(compacted);
 

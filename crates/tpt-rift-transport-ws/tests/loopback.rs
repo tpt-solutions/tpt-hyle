@@ -1,14 +1,15 @@
 use std::time::Duration;
 
 use tokio::net::TcpListener;
-use tpt_hyle::{Hyle, VecStorage};
+use tpt_hyle::VecStorage;
+use tpt_hyle_test_utils::mem_store;
 use tpt_rift::{sync_round, PeerLink, Replica, Transport};
 use tpt_rift_transport_ws::{accept, connect};
 
-type R = Replica<VecStorage, VecStorage>;
+type R = Replica<VecStorage>;
 
 fn replica(node: u128) -> R {
-    Replica::new(Hyle::open(VecStorage::new(), VecStorage::new(), node).unwrap())
+    Replica::new(mem_store(node))
 }
 
 fn has(r: &mut R, key: &[u8]) -> bool {

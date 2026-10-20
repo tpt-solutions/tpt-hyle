@@ -1,25 +1,29 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
-//! Sync-native, append-only micro key-value store (State + Sync segments).
+//! Sync-native, encrypted, append-only key-value store.
 //!
-//! Every write appends a value to the **State Segment** and a fixed-size
-//! [`ChangeEvent`] to the **Sync Segment**. The Sync Segment is the
-//! replication feed, so no separate change tracking is needed.
+//! A store is one file. Every write is a sealed frame: encrypted and
+//! authenticated with XChaCha20-Poly1305. Writes are grouped into batches, and
+//! each batch is durable once its commit frame is on disk, after one flush. The
+//! log of writes is the replication feed, so no separate change tracking exists.
 //!
-//! The on-disk format is documented in `docs/format.md`.
+//! The format is in `docs/format.md`. The design decisions are in `docs/adr/`.
 //!
 //! # Features
 //!
-//! - default `std`: file-backed storage and [`Hyle::open_file`].
-//! - `alloc`: growable in-memory storage ([`VecStorage`]).
-//! - neither: `no_std`, no heap. Use [`FixedStorage`] for storage.
+//! - `std` (default): file storage, passphrase derivation, and the random
+//!   per-open session that nonces need.
+//! - `alloc`: the store itself, and in-memory storage ([`VecStorage`]). The
+//!   store needs a heap for encryption and batches.
+//! - neither: the storage trait and the error type only. The no_alloc store of
+//!   earlier versions is gone, see ADR 0013.
 //!
 //! # Example
 //!
 //! ```
-//! use tpt_hyle::{FixedStorage, Hyle};
+//! use tpt_hyle::{Hyle, Key, VecStorage};
 //!
-//! let mut db = Hyle::open(FixedStorage::<4096>::new(), FixedStorage::<4096>::new(), 1)?;
+//! let mut db = Hyle::open_with_session(VecStorage::new(), 1, Key::from_bytes([7; 32]), [1; 16])?;
 //! db.put(b"user:101", b"alice")?;
 //!
 //! let mut buf = [0u8; 16];
@@ -31,20 +35,30 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "alloc")]
+#[cfg(feature = "alloc")]
 mod checksum;
 mod error;
+#[cfg(feature = "alloc")]
+#[cfg(feature = "alloc")]
 mod format;
 #[cfg(feature = "json")]
 mod json;
 mod storage;
+#[cfg(feature = "alloc")]
 mod store;
 
 pub use error::Error;
-pub use format::{ChangeEvent, FORMAT_VERSION, HEADER_LEN, MAX_KEY_LEN, SYNC_RECORD_LEN};
+#[cfg(feature = "alloc")]
+#[cfg(feature = "alloc")]
+pub use format::{ChangeEvent, FORMAT_VERSION, HEADER_LEN, MAX_KEY_LEN};
 pub use storage::{FixedStorage, Storage};
+
+#[cfg(feature = "alloc")]
+pub use store::{Batch, Events, Hyle, Key};
+
 #[cfg(feature = "std")]
 pub use store::file_node_id;
-pub use store::{Events, Hyle};
 
 #[cfg(feature = "alloc")]
 pub use storage::VecStorage;

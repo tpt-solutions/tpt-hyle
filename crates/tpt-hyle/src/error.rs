@@ -54,6 +54,11 @@ pub enum Error {
     /// JSON encoding or decoding failed.
     #[cfg(feature = "json")]
     Json(alloc::string::String),
+    /// The key or passphrase does not match the store. The store was not
+    /// modified.
+    WrongKey,
+    /// Sealing or opening failed for a reason other than a wrong key.
+    Crypto(&'static str),
     /// An I/O error from the file backend.
     #[cfg(feature = "std")]
     Io(std::io::Error),
@@ -86,6 +91,8 @@ impl fmt::Display for Error {
             Error::Poisoned => write!(f, "a previous write failed; reopen the store"),
             Error::TargetNotEmpty => write!(f, "compaction target segments must be empty"),
             Error::TombstoneWithValue => write!(f, "a tombstone must not carry a value"),
+            Error::WrongKey => write!(f, "the key or passphrase does not match this store"),
+            Error::Crypto(what) => write!(f, "encryption error: {what}"),
             #[cfg(feature = "json")]
             Error::Json(msg) => write!(f, "JSON error: {msg}"),
             #[cfg(feature = "std")]

@@ -1,15 +1,18 @@
 #![forbid(unsafe_code)]
 //! WebAssembly bindings for tpt-rift.
 //!
-//! A [`Store`] is an in-memory replica. It holds its data in memory and does
-//! no I/O. JavaScript moves the bytes. It calls [`Store::export`] to get a
-//! delta for a peer, sends those bytes over whatever link it has, and calls
-//! [`Store::import`] on the bytes it receives. Import is idempotent, so the
-//! link may duplicate or reorder messages.
+//! A [`Store`] is an in-memory encrypted replica. It does no I/O of its own.
+//! JavaScript moves the bytes:
 //!
-//! Persistence is not built. IndexedDB would need an asynchronous storage
-//! backend, and the storage trait is synchronous. Until that exists, data
-//! lasts as long as the page.
+//! - [`Store::export`] returns the delta a peer lacks. JavaScript sends it.
+//! - [`Store::import`] applies a delta JavaScript received. Import is
+//!   idempotent, so the link may duplicate or reorder messages.
+//! - [`Store::save`] returns the whole store as bytes. JavaScript persists them,
+//!   for example in IndexedDB, and [`Store::load`] restores them. Recovery runs on
+//!   load, so a save cut short leaves a tail that is dropped.
+//!
+//! The store is encrypted with a key derived from a passphrase, so the saved
+//! bytes are not readable without it.
 
 use tpt_hyle::{Hyle, VecStorage};
 use tpt_rift::{Delta, Replica};
@@ -19,22 +22,37 @@ fn js_err(e: impl std::fmt::Display) -> JsError {
     JsError::new(&e.to_string())
 }
 
-/// An in-memory replica, usable from JavaScript.
+fn parse_node(node_id: &str) -> Result<u128, JsError> {
+    node_id
+        .parse()
+        .map_err(|_| JsError::new("node_id must be a decimal u128"))
+}
+
+/// An in-memory encrypted replica, usable from JavaScript.
 #[wasm_bindgen]
 pub struct Store {
-    replica: Replica<VecStorage, VecStorage>,
+    replica: Replica<VecStorage>,
 }
 
 #[wasm_bindgen]
 impl Store {
-    /// Creates an empty store for `node_id`, given as a decimal string. Each
-    /// running copy needs its own node id.
+    /// Creates an empty store for `node_id`, a decimal string. Each running
+    /// copy needs its own node id. The passphrase derives the encryption key.
     #[wasm_bindgen(constructor)]
-    pub fn new(node_id: &str) -> Result<Store, JsError> {
-        let node: u128 = node_id
-            .parse()
-            .map_err(|_| JsError::new("node_id must be a decimal u128"))?;
-        let db = Hyle::open(VecStorage::new(), VecStorage::new(), node).map_err(js_err)?;
+    pub fn new(node_id: &str, passphrase: &[u8]) -> Result<Store, JsError> {
+        let node = parse_node(node_id)?;
+        let db = Hyle::open_with_passphrase(VecStorage::new(), node, passphrase).map_err(js_err)?;
+        Ok(Store {
+            replica: Replica::new(db),
+        })
+    }
+
+    /// Restores a store from bytes returned by [`Store::save`]. Fails with a
+    /// wrong-key error if the passphrase does not match.
+    pub fn load(node_id: &str, passphrase: &[u8], bytes: &[u8]) -> Result<Store, JsError> {
+        let node = parse_node(node_id)?;
+        let storage = VecStorage::from_bytes(bytes.to_vec());
+        let db = Hyle::open_with_passphrase(storage, node, passphrase).map_err(js_err)?;
         Ok(Store {
             replica: Replica::new(db),
         })
@@ -66,18 +84,14 @@ impl Store {
         self.replica.store().delete(key).map_err(js_err)
     }
 
-    /// The local Lamport clock. Returned as a JavaScript number, which is exact
-    /// below 2^53.
+    /// The local Lamport clock, as a JavaScript number. Exact below 2^53.
     pub fn lamport(&mut self) -> f64 {
         self.replica.store().lamport() as f64
     }
 
-    /// Encodes every change this store holds that `peer_node` does not
-    /// originate. Send the result to that peer.
+    /// Encodes every change this store holds that `peer_node` does not originate.
     pub fn export(&mut self, peer_node: &str) -> Result<Vec<u8>, JsError> {
-        let peer: u128 = peer_node
-            .parse()
-            .map_err(|_| JsError::new("peer_node must be a decimal u128"))?;
+        let peer = parse_node(peer_node)?;
         let start = self.replica.start_cursor();
         let export = self
             .replica
@@ -86,41 +100,15 @@ impl Store {
         Ok(export.delta.encode())
     }
 
-    /// Applies bytes from a peer. Returns how many changes won and were applied.
+    /// Applies bytes from a peer. Returns how many changes won.
     pub fn import(&mut self, bytes: &[u8]) -> Result<u32, JsError> {
         let delta = Delta::decode(bytes).map_err(js_err)?;
         let stats = self.replica.import(&delta).map_err(js_err)?;
         Ok(stats.applied as u32)
     }
-}
 
-#[wasm_bindgen]
-impl Store {
-    /// Restores a store from the bytes of its two segments, as returned by
-    /// [`Store::state_bytes`] and [`Store::sync_bytes`]. Recovery runs, so a
-    /// tail torn by an interrupted save is dropped, as it would be on disk.
-    pub fn load(node_id: &str, state: &[u8], sync: &[u8]) -> Result<Store, JsError> {
-        let node: u128 = node_id
-            .parse()
-            .map_err(|_| JsError::new("node_id must be a decimal u128"))?;
-        let db = Hyle::open(
-            VecStorage::from_bytes(state.to_vec()),
-            VecStorage::from_bytes(sync.to_vec()),
-            node,
-        )
-        .map_err(js_err)?;
-        Ok(Store {
-            replica: Replica::new(db),
-        })
-    }
-
-    /// The state segment, as bytes, for saving.
-    pub fn state_bytes(&self) -> Vec<u8> {
-        self.replica.store_ref().segments().0.bytes().to_vec()
-    }
-
-    /// The sync segment, as bytes, for saving.
-    pub fn sync_bytes(&self) -> Vec<u8> {
-        self.replica.store_ref().segments().1.bytes().to_vec()
+    /// The whole store as bytes, for persisting. Encrypted.
+    pub fn save(&self) -> Vec<u8> {
+        self.replica.store_ref().storage().bytes().to_vec()
     }
 }

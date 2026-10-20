@@ -1,11 +1,27 @@
 use serde_json::json;
-use tpt_hyle::{Hyle, VecStorage};
+use tpt_hyle::{Hyle, Key, VecStorage};
 use tpt_rift::{delete_doc, get_doc, put_doc, Replica};
 
-type R = Replica<VecStorage, VecStorage>;
+type R = Replica<VecStorage>;
+
+static SESSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// A store with a fresh session, so no two opens share nonces.
+fn fresh_hyle(node: u128) -> Hyle<VecStorage> {
+    let mut session = [0u8; 16];
+    let n = SESSIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    session[..8].copy_from_slice(&n.to_le_bytes());
+    Hyle::open_with_session(
+        VecStorage::new(),
+        node,
+        Key::from_bytes([0x5a; 32]),
+        session,
+    )
+    .unwrap()
+}
 
 fn replica(node: u128) -> R {
-    Replica::new(Hyle::open(VecStorage::new(), VecStorage::new(), node).unwrap())
+    Replica::new(fresh_hyle(node))
 }
 
 /// Sends everything each side has to the other, twice, so it settles.

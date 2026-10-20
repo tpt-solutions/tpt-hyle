@@ -9,7 +9,15 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use tpt_hyle::{Hyle, VecStorage};
+use tpt_hyle::{Hyle, Key, VecStorage};
+
+const PASS: &[u8] = b"bench passphrase";
+
+fn mem_store(node: u128) -> Hyle<VecStorage> {
+    let mut session = [0u8; 16];
+    session.copy_from_slice(&node.to_le_bytes());
+    Hyle::open_with_session(VecStorage::new(), node, Key::from_bytes([3; 32]), session).unwrap()
+}
 
 const VALUE_LEN: usize = 100;
 
@@ -32,7 +40,7 @@ fn report(label: &str, n: usize, secs: f64) {
 }
 
 fn hyle_mem(n: usize) -> f64 {
-    let mut db = Hyle::open(VecStorage::new(), VecStorage::new(), 1).unwrap();
+    let mut db = mem_store(1);
     let start = Instant::now();
     for i in 0..n {
         db.put(&key(i), &value(i)).unwrap();
@@ -41,7 +49,7 @@ fn hyle_mem(n: usize) -> f64 {
 }
 
 fn hyle_file(dir: &Path, n: usize) -> f64 {
-    let mut db = Hyle::open_file(dir.join("hyle"), 1).unwrap();
+    let mut db = Hyle::open_file(dir.join("hyle"), 1, PASS).unwrap();
     let start = Instant::now();
     for i in 0..n {
         db.put(&key(i), &value(i)).unwrap();
@@ -111,7 +119,7 @@ fn main() {
 
 /// Same workload, but `batch` writes per durable commit.
 fn hyle_file_batched(dir: &Path, n: usize, batch: usize) -> f64 {
-    let mut db = Hyle::open_file(dir.join("hyle-batch"), 1).unwrap();
+    let mut db = Hyle::open_file(dir.join("hyle-batch"), 1, PASS).unwrap();
     let start = Instant::now();
     let mut i = 0;
     while i < n {
@@ -168,8 +176,7 @@ fn batched_report(dir: &Path, n: usize) {
 
 /// Read cost against log length: time `gets` lookups of existing keys.
 pub fn read_scan(n: usize, gets: usize) {
-    use tpt_hyle::{Hyle, VecStorage};
-    let mut db = Hyle::open(VecStorage::new(), VecStorage::new(), 1).unwrap();
+    let mut db = mem_store(1);
     for i in 0..n {
         db.put(&key(i), &value(i)).unwrap();
     }

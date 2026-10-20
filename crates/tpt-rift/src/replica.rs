@@ -1,6 +1,6 @@
 //! A replica: a local store plus the logic to export and import deltas.
 
-use tpt_hyle::{Hyle, Storage, HEADER_LEN, SYNC_RECORD_LEN};
+use tpt_hyle::{Hyle, Storage, HEADER_LEN};
 
 use crate::wire::{Change, Delta};
 use crate::RiftError;
@@ -37,28 +37,28 @@ pub struct ImportStats {
 }
 
 /// A store taking part in replication.
-pub struct Replica<St, Sy> {
-    store: Hyle<St, Sy>,
+pub struct Replica<S: Storage> {
+    store: Hyle<S>,
 }
 
-impl<St: Storage, Sy: Storage> Replica<St, Sy> {
+impl<S: Storage> Replica<S> {
     /// Wraps a store.
-    pub fn new(store: Hyle<St, Sy>) -> Self {
+    pub fn new(store: Hyle<S>) -> Self {
         Self { store }
     }
 
     /// The underlying store, for local reads and writes.
-    pub fn store_ref(&self) -> &Hyle<St, Sy> {
+    pub fn store_ref(&self) -> &Hyle<S> {
         &self.store
     }
 
     /// The underlying store, for local reads and writes.
-    pub fn store(&mut self) -> &mut Hyle<St, Sy> {
+    pub fn store(&mut self) -> &mut Hyle<S> {
         &mut self.store
     }
 
     /// Unwraps the store.
-    pub fn into_store(self) -> Hyle<St, Sy> {
+    pub fn into_store(self) -> Hyle<S> {
         self.store
     }
 
@@ -118,7 +118,6 @@ impl<St: Storage, Sy: Storage> Replica<St, Sy> {
             });
         }
         debug_assert!(next >= cursor.offset);
-        debug_assert_eq!((next - HEADER_LEN) % SYNC_RECORD_LEN as u64, 0);
 
         Ok(Export {
             delta: Delta {

@@ -18,7 +18,7 @@ pub struct PeerLink {
 impl PeerLink {
     /// A link that has never synced. It starts at the beginning of the
     /// replica's current generation.
-    pub fn new<St: Storage, Sy: Storage>(peer_node: u128, replica: &Replica<St, Sy>) -> Self {
+    pub fn new<S: Storage>(peer_node: u128, replica: &Replica<S>) -> Self {
         Self {
             peer_node,
             cursor: replica.start_cursor(),
@@ -28,7 +28,7 @@ impl PeerLink {
     /// Restarts from the beginning of the current generation. Call this after
     /// [`RiftError::StaleGeneration`]. The peer then receives the whole
     /// current log again, which is safe because import is idempotent.
-    pub fn reset<St: Storage, Sy: Storage>(&mut self, replica: &Replica<St, Sy>) {
+    pub fn reset<S: Storage>(&mut self, replica: &Replica<S>) {
         self.cursor = replica.start_cursor();
     }
 }
@@ -50,8 +50,8 @@ pub struct RoundStats {
 /// after the delta is sent, so a failed send is retried from the same place.
 /// If the peer's cursor is stale, the error is returned, and the caller
 /// should call [`PeerLink::reset`] and try again.
-pub async fn sync_round<St: Storage, Sy: Storage, T: Transport>(
-    replica: &mut Replica<St, Sy>,
+pub async fn sync_round<S: Storage, T: Transport>(
+    replica: &mut Replica<S>,
     link: &mut PeerLink,
     transport: &T,
     max_events: usize,

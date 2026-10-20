@@ -1,12 +1,12 @@
 // Saves a tpt-rift wasm store to IndexedDB, and restores it on the next load.
 //
 // The store is synchronous and in memory. This layer owns persistence. After
-// each change the caller calls `save`, which writes both segments in one
-// IndexedDB transaction. A transaction either lands whole or not at all, so a
+// each change the caller calls `save`, which writes the store's encrypted bytes
+// in one IndexedDB transaction. A transaction lands whole or not at all, so a
 // save interrupted by a crash leaves the previous snapshot in place.
 //
-// Each save writes the whole store. That is O(size) per save, which is fine
-// for small stores. Incremental saves are a later step.
+// Each save writes the whole store. That is O(size) per save. The bytes are
+// encrypted, so the database holds nothing readable without the passphrase.
 
 const STORE_NAME = "segments";
 const KEY = "current";
@@ -50,25 +50,25 @@ export class Persistence {
     return this;
   }
 
-  /** Writes the store's two segments in one transaction. */
+  /** Writes the store's encrypted bytes in one transaction. */
   async save(store) {
-    const record = { state: store.state_bytes(), sync: store.sync_bytes() };
     const tx = this.db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).put(record, KEY);
+    tx.objectStore(STORE_NAME).put({ bytes: store.save() }, KEY);
     await transactionDone(tx);
   }
 
   /**
-   * Restores the saved store for `nodeId`, using `StoreClass.load`. Returns
-   * `null` if nothing has been saved yet.
+   * Restores the saved store for `nodeId` with `passphrase`, using
+   * `StoreClass.load`. Returns `null` if nothing has been saved yet. Throws if
+   * the passphrase does not match.
    */
-  async load(nodeId, StoreClass) {
+  async load(nodeId, passphrase, StoreClass) {
     const tx = this.db.transaction(STORE_NAME, "readonly");
     const record = await request(tx.objectStore(STORE_NAME).get(KEY));
     if (!record) {
       return null;
     }
-    return StoreClass.load(nodeId, record.state, record.sync);
+    return StoreClass.load(nodeId, passphrase, record.bytes);
   }
 
   /** Closes the database. */

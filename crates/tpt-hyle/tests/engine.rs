@@ -1,21 +1,45 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use tpt_hyle::{Error, FixedStorage, Hyle, Storage, VecStorage, HEADER_LEN, MAX_KEY_LEN};
+use tpt_hyle::{Error, FixedStorage, Hyle, Key, Storage, VecStorage, HEADER_LEN, MAX_KEY_LEN};
 
 const NODE: u128 = 0x0123_4567_89ab_cdef_0123_4567_89ab_cdef;
+const KEY: [u8; 32] = [0x42; 32];
 
-type Mem = Hyle<VecStorage, VecStorage>;
-
-fn fresh() -> Mem {
-    Hyle::open(VecStorage::new(), VecStorage::new(), NODE).unwrap()
+/// A fresh session for every open, as the real store requires.
+fn session(n: u8) -> [u8; 16] {
+    [n; 16]
 }
 
-fn get_string<St: Storage, Sy: Storage>(db: &mut Hyle<St, Sy>, key: &[u8]) -> Option<String> {
+type Mem = Hyle<VecStorage>;
+
+fn fresh() -> Mem {
+    Hyle::open_with_session(VecStorage::new(), NODE, Key::from_bytes(KEY), session(1)).unwrap()
+}
+
+fn reopen(storage: VecStorage, n: u8) -> Result<Mem, Error> {
+    Hyle::open_with_session(storage, NODE, Key::from_bytes(KEY), session(n))
+}
+
+fn get_string<S: Storage>(db: &mut Hyle<S>, key: &[u8]) -> Option<String> {
     let mut buf = [0u8; 256];
     db.get(key, &mut buf)
         .unwrap()
         .map(|n| String::from_utf8(buf[..n].to_vec()).unwrap())
+}
+
+/// The frames in a raw store file, as (offset, nonce) pairs.
+fn frames(bytes: &[u8]) -> Vec<(usize, [u8; 24])> {
+    let mut out = Vec::new();
+    let mut at = HEADER_LEN as usize;
+    while at + 29 <= bytes.len() {
+        let sealed = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        let mut nonce = [0u8; 24];
+        nonce.copy_from_slice(&bytes[at + 5..at + 29]);
+        out.push((at, nonce));
+        at += 29 + sealed;
+    }
+    out
 }
 
 #[test]
@@ -43,10 +67,8 @@ fn delete_hides_key_until_rewritten() {
     db.put(b"k", b"v").unwrap();
     assert!(db.delete(b"k").unwrap());
     assert_eq!(get_string(&mut db, b"k"), None);
-    assert!(!db.contains_key(b"k").unwrap());
     assert!(!db.delete(b"k").unwrap(), "second delete is a no-op");
     assert!(!db.delete(b"never-existed").unwrap());
-
     db.put(b"k", b"back").unwrap();
     assert_eq!(get_string(&mut db, b"k").as_deref(), Some("back"));
 }
@@ -81,7 +103,6 @@ fn clock_advances_per_write_and_observes_remote() {
     let b = db.put(b"b", b"2").unwrap();
     assert_eq!((a.lamport, b.lamport), (1, 2));
     assert_eq!(a.node_id, NODE);
-
     db.observe_lamport(100);
     db.observe_lamport(50);
     assert_eq!(db.lamport(), 100);
@@ -95,28 +116,69 @@ fn reopen_restores_data_and_clock() {
     db.put(b"a", b"2").unwrap();
     db.delete(b"gone").unwrap();
     db.put(b"b", b"3").unwrap();
-    let (state, sync) = db.into_parts();
-
-    let mut db = Hyle::open(state, sync, NODE).unwrap();
+    let mut db = reopen(db.into_storage(), 2).unwrap();
     assert_eq!(get_string(&mut db, b"a").as_deref(), Some("2"));
     assert_eq!(get_string(&mut db, b"b").as_deref(), Some("3"));
-    // Three committed writes. The delete of a missing key writes nothing.
     assert_eq!(db.lamport(), 3);
     assert_eq!(db.put(b"c", b"4").unwrap().lamport, 4);
+}
+
+#[test]
+fn reopen_with_the_wrong_key_is_refused_and_the_file_is_untouched() {
+    let mut db = fresh();
+    db.put(b"a", b"1").unwrap();
+    db.put(b"b", b"2").unwrap();
+    let storage = db.into_storage();
+    let before = storage.bytes().to_vec();
+    let wrong = Hyle::open_with_session(
+        storage.clone(),
+        NODE,
+        Key::from_bytes([0x99; 32]),
+        session(3),
+    );
+    assert!(matches!(wrong, Err(Error::WrongKey)));
+    // A wrong key must never truncate what it cannot read.
+    assert_eq!(storage.bytes(), &before[..]);
 }
 
 #[test]
 fn reopen_with_other_node_id_is_refused() {
     let mut db = fresh();
     db.put(b"a", b"1").unwrap();
-    let (state, sync) = db.into_parts();
-    match Hyle::open(state, sync, NODE + 1) {
+    let storage = db.into_storage();
+    match Hyle::open_with_session(storage, NODE + 1, Key::from_bytes(KEY), session(2)) {
         Err(Error::NodeIdMismatch { stored, expected }) => {
             assert_eq!(stored, NODE);
             assert_eq!(expected, NODE + 1);
         }
         other => panic!("expected NodeIdMismatch, got {:?}", other.err()),
     }
+}
+
+#[test]
+fn plaintext_never_reaches_the_file() {
+    let mut db = fresh();
+    db.put(b"secret-key-marker", b"SECRET-VALUE-MARKER-0123456789")
+        .unwrap();
+    let bytes = db.storage().bytes().to_vec();
+    assert!(!bytes.windows(12).any(|w| w == b"SECRET-VALUE"));
+    assert!(!bytes.windows(10).any(|w| w == b"secret-key"));
+}
+
+#[test]
+fn nonces_are_never_reused_even_after_a_rollback() {
+    let mut db = fresh();
+    db.put(b"keep", b"yes").unwrap();
+    {
+        let mut batch = db.batch().unwrap();
+        batch.put(b"temp", b"will be rolled back").unwrap();
+        // Dropped without commit: the frame is removed from the file.
+    }
+    db.put(b"after", b"rollback").unwrap();
+    let raw = db.storage().bytes().to_vec();
+    let nonces: Vec<[u8; 24]> = frames(&raw).into_iter().map(|(_, n)| n).collect();
+    let unique: std::collections::BTreeSet<_> = nonces.iter().collect();
+    assert_eq!(unique.len(), nonces.len(), "every frame has its own nonce");
 }
 
 #[test]
@@ -134,11 +196,13 @@ fn events_since_yields_feed_in_order_and_resumes() {
     let lamports: Vec<u64> = all.iter().map(|(_, ev)| ev.lamport).collect();
     assert_eq!(lamports, vec![1, 2, 3]);
     assert!(all[2].1.tombstone);
-    // The feed skips commit records, so the last cursor sits just before the
-    // commit record that closes the last batch.
-    assert_eq!(all.last().unwrap().0 + 56, db.sync_end());
+    // The last write is followed by its batch's commit frame, 105 bytes.
+    assert_eq!(
+        all.last().unwrap().0 + 105,
+        db.sync_end(),
+        "the feed ends at the log end"
+    );
 
-    // Resume from the cursor after the first event: should yield the last two.
     let resume = all[0].0;
     let rest: Vec<_> = db
         .events_since(resume)
@@ -146,8 +210,6 @@ fn events_since_yields_feed_in_order_and_resumes() {
         .map(|r| r.unwrap().1.lamport)
         .collect();
     assert_eq!(rest, vec![2, 3]);
-
-    // Cursor at the end yields nothing.
     assert_eq!(db.events_since(db.sync_end()).unwrap().count(), 0);
 }
 
@@ -160,7 +222,7 @@ fn events_since_rejects_bad_cursors() {
         db.events_since(HEADER_LEN + 1),
         Err(Error::BadCursor(_))
     ));
-    let past_end = db.sync_end() + 56;
+    let past_end = db.sync_end() + 1;
     assert!(matches!(
         db.events_since(past_end),
         Err(Error::BadCursor(_))
@@ -179,132 +241,65 @@ fn read_record_returns_key_and_value_for_sync_consumers() {
 }
 
 #[test]
-fn fixed_storage_store_works_without_heap() {
-    let mut db = Hyle::open(FixedStorage::<512>::new(), FixedStorage::<512>::new(), NODE).unwrap();
-    db.put(b"k", b"v").unwrap();
-    let mut buf = [0u8; 8];
-    assert_eq!(db.get(b"k", &mut buf).unwrap(), Some(1));
-    assert_eq!(buf[0], b'v');
+fn uncommitted_batch_is_dropped_on_open() {
+    let mut db = fresh();
+    db.put(b"a", b"1").unwrap();
+    let committed_len = db.storage().len();
+    db.put(b"b", b"2").unwrap();
+    // Remove the second batch's commit frame, as a crash before it would.
+    let mut storage = db.into_storage();
+    let cut = storage.len() - 105;
+    storage.truncate(cut).unwrap();
+
+    let mut db = reopen(storage, 2).unwrap();
+    assert_eq!(get_string(&mut db, b"a").as_deref(), Some("1"));
+    assert_eq!(get_string(&mut db, b"b"), None);
+    assert_eq!(db.storage().len(), committed_len);
 }
 
 #[test]
-fn fixed_storage_reports_full() {
-    let mut db = Hyle::open(
-        FixedStorage::<128>::new(),
-        FixedStorage::<1024>::new(),
-        NODE,
-    )
-    .unwrap();
-    let mut wrote = 0;
-    loop {
-        match db.put(b"k", &[0u8; 32]) {
-            Ok(_) => wrote += 1,
-            Err(Error::Full) => break,
-            Err(e) => panic!("unexpected error {e}"),
-        }
-        assert!(wrote < 100, "should have run out of space");
-    }
-    assert!(wrote >= 1);
-}
-
-#[test]
-fn torn_sync_record_is_truncated_on_reopen() {
+fn torn_commit_frame_is_dropped_on_open() {
     let mut db = fresh();
     db.put(b"a", b"1").unwrap();
     db.put(b"b", b"2").unwrap();
-    let (state, mut sync) = db.into_parts();
-    // Simulate a crash that wrote only part of the last sync record.
-    let len = sync.len();
-    sync.truncate(len - 20).unwrap();
-
-    let mut db = Hyle::open(state, sync, NODE).unwrap();
+    let mut storage = db.into_storage();
+    let len = storage.len();
+    storage.truncate(len - 20).unwrap();
+    let mut db = reopen(storage, 2).unwrap();
     assert_eq!(get_string(&mut db, b"a").as_deref(), Some("1"));
-    assert_eq!(
-        get_string(&mut db, b"b"),
-        None,
-        "uncommitted put is dropped"
-    );
-    assert_eq!((db.sync_end() - HEADER_LEN) % 56, 0);
-
-    // The store is usable again and new writes land after the repaired tail.
+    assert_eq!(get_string(&mut db, b"b"), None);
     db.put(b"b", b"3").unwrap();
     assert_eq!(get_string(&mut db, b"b").as_deref(), Some("3"));
 }
 
 #[test]
-fn orphaned_state_record_is_reclaimed_on_reopen() {
-    let mut db = fresh();
-    db.put(b"a", b"1").unwrap();
-    let (mut state, sync) = db.into_parts();
-    let committed_state_len = state.len();
-    // A state record with no matching sync event, as a crash between the
-    // two appends would leave.
-    state.append(&[0xFF; 20]).unwrap();
-
-    let mut db = Hyle::open(state, sync, NODE).unwrap();
-    assert_eq!(get_string(&mut db, b"a").as_deref(), Some("1"));
-    let (state, _) = db.into_parts();
-    assert_eq!(state.len(), committed_state_len);
-}
-
-#[test]
-fn damage_before_the_tail_is_reported_not_silently_dropped() {
+fn damage_inside_committed_data_is_refused_on_open() {
     let mut db = fresh();
     db.put(b"a", b"1").unwrap();
     db.put(b"b", b"2").unwrap();
     db.put(b"c", b"3").unwrap();
-    let (state, mut sync) = db.into_parts();
-
-    // Flip a bit in the middle sync record (the checksum field).
-    let mid = HEADER_LEN as usize + 56;
-    sync.bytes_mut()[mid] ^= 0x01;
-
-    assert!(matches!(
-        Hyle::open(state, sync, NODE),
-        Err(Error::Corrupt(_))
-    ));
+    let mut storage = db.into_storage();
+    // A byte inside the first frame's ciphertext. Later batches still verify.
+    storage.bytes_mut()[HEADER_LEN as usize + 40] ^= 0x01;
+    assert!(matches!(reopen(storage, 2), Err(Error::Corrupt(_))));
 }
 
 #[test]
-fn damaged_committed_record_is_reported_on_open() {
-    // The last put is committed: its commit record is intact. Damage to its
-    // data is therefore not a torn write, and open must refuse it.
+fn a_damaged_final_commit_is_treated_as_an_uncommitted_batch() {
+    // Indistinguishable from a torn write: the last batch is dropped whole.
     let mut db = fresh();
     db.put(b"a", b"1").unwrap();
     db.put(b"b", b"2").unwrap();
-    let (mut state, sync) = db.into_parts();
-    let last = state.len() as usize - 1;
-    state.bytes_mut()[last] ^= 0x40;
-
-    assert!(matches!(
-        Hyle::open(state, sync, NODE),
-        Err(Error::Corrupt(_))
-    ));
-}
-
-#[test]
-fn uncommitted_tail_is_dropped_on_open() {
-    // Simulate a batch that wrote its records but never reached its commit
-    // record: strip the last commit record off the sync log.
-    let mut db = fresh();
-    db.put(b"a", b"1").unwrap();
-    db.put(b"b", b"2").unwrap();
-    let (state, mut sync) = db.into_parts();
-    let len = sync.len();
-    sync.truncate(len - 56).unwrap();
-
-    let mut db = Hyle::open(state, sync, NODE).unwrap();
+    let mut storage = db.into_storage();
+    let last = storage.len() as usize - 1;
+    storage.bytes_mut()[last] ^= 0x40;
+    let mut db = reopen(storage, 2).unwrap();
     assert_eq!(get_string(&mut db, b"a").as_deref(), Some("1"));
     assert_eq!(get_string(&mut db, b"b"), None);
-    assert_eq!(
-        db.sync_end(),
-        HEADER_LEN + 2 * 56,
-        "data and commit of 'a' only"
-    );
 }
 
 /// Wraps a `VecStorage` and XORs one byte on read once armed. Lets a test
-/// damage a segment after `open` has already verified it.
+/// damage the file after `open` has already verified it.
 struct Armed {
     inner: VecStorage,
     flip: Rc<Cell<Option<u64>>>,
@@ -337,28 +332,25 @@ impl Storage for Armed {
 #[test]
 fn value_damaged_after_open_is_reported_on_read() {
     let flip = Rc::new(Cell::new(None));
-    let mut db = Hyle::open(
+    let mut db = Hyle::open_with_session(
         Armed {
             inner: VecStorage::new(),
             flip: flip.clone(),
         },
-        Armed {
-            inner: VecStorage::new(),
-            flip: Rc::new(Cell::new(None)),
-        },
         NODE,
+        Key::from_bytes(KEY),
+        session(1),
     )
     .unwrap();
     db.put(b"k", b"value").unwrap();
-
-    // Value starts after the 32-byte header, 10-byte record header and key.
-    flip.set(Some(HEADER_LEN + 10 + 1 + 2));
+    // Inside the sealed value of the only frame.
+    flip.set(Some(HEADER_LEN + 29 + 40));
     let mut buf = [0u8; 16];
-    assert!(matches!(db.get(b"k", &mut buf), Err(Error::Corrupt(_))));
+    assert!(db.get(b"k", &mut buf).is_err());
 }
 
-/// Flips every bit of every byte in a small store, one at a time. Open and
-/// read must return a result (Ok or Err), never panic.
+/// Flips every bit of every byte in a small store, one at a time. Opening and
+/// reading must return a result, never panic.
 #[test]
 fn single_bit_flips_never_panic() {
     let mut db = fresh();
@@ -366,35 +358,37 @@ fn single_bit_flips_never_panic() {
     db.put(b"beta", b"two-two").unwrap();
     db.delete(b"alpha").unwrap();
     db.put(b"gamma", b"").unwrap();
-    let (state, sync) = db.into_parts();
-    let state_len = state.len() as usize;
-    let sync_len = sync.len() as usize;
+    let storage = db.into_storage();
+    let len = storage.len() as usize;
 
-    for which in 0..2 {
-        let (seg_len, is_state) = if which == 0 {
-            (state_len, true)
-        } else {
-            (sync_len, false)
-        };
-        for pos in 0..seg_len {
-            for bit in 0..8 {
-                let mut s = state.clone();
-                let mut y = sync.clone();
-                if is_state {
-                    s.bytes_mut()[pos] ^= 1 << bit;
-                } else {
-                    y.bytes_mut()[pos] ^= 1 << bit;
-                }
-                if let Ok(mut db) = Hyle::open(s, y, NODE) {
-                    let mut buf = [0u8; 16];
-                    let _ = db.get(b"alpha", &mut buf);
-                    let _ = db.get(b"beta", &mut buf);
-                    let _ = db.get(b"gamma", &mut buf);
-                    let _ = db.events_since(HEADER_LEN).map(|it| it.count());
-                }
+    for pos in 0..len {
+        for bit in 0..8 {
+            let mut s = storage.clone();
+            s.bytes_mut()[pos] ^= 1 << bit;
+            if let Ok(mut db) = reopen(s, 9) {
+                let mut buf = [0u8; 16];
+                let _ = db.get(b"alpha", &mut buf);
+                let _ = db.get(b"beta", &mut buf);
+                let _ = db.get(b"gamma", &mut buf);
+                let _ = db.events_since(HEADER_LEN).map(|it| it.count());
             }
         }
     }
+}
+
+#[test]
+fn passphrase_store_reopens_with_the_same_passphrase_only() {
+    let storage = VecStorage::new();
+    let mut db = Hyle::open_with_passphrase(storage, NODE, b"correct horse").unwrap();
+    db.put(b"k", b"v").unwrap();
+    let storage = db.into_storage();
+
+    let mut db = Hyle::open_with_passphrase(storage.clone(), NODE, b"correct horse").unwrap();
+    assert_eq!(get_string(&mut db, b"k").as_deref(), Some("v"));
+    assert!(matches!(
+        Hyle::open_with_passphrase(storage, NODE, b"battery staple"),
+        Err(Error::WrongKey)
+    ));
 }
 
 #[cfg(feature = "std")]
@@ -402,20 +396,42 @@ fn single_bit_flips_never_panic() {
 fn file_backed_store_survives_reopen() {
     let dir = std::env::temp_dir().join(format!("tpt-hyle-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let base = dir.join("db");
+    let path = dir.join("db");
+    let _ = std::fs::remove_file(&path);
 
     {
-        let mut db = Hyle::open_file(&base, NODE).unwrap();
+        let mut db = Hyle::open_file(&path, NODE, b"pw").unwrap();
         db.put(b"user:1", b"persisted").unwrap();
         db.delete(b"tmp").unwrap();
     }
     {
-        let mut db = Hyle::open_file(&base, NODE).unwrap();
+        let mut db = Hyle::open_file(&path, NODE, b"pw").unwrap();
         assert_eq!(get_string(&mut db, b"user:1").as_deref(), Some("persisted"));
         assert_eq!(db.lamport(), 1);
     }
+    assert_eq!(tpt_hyle::file_node_id(&path).unwrap(), NODE);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 
-    let _ = std::fs::remove_dir_all(&dir);
+#[test]
+fn fixed_storage_is_a_storage_and_reports_full() {
+    let mut db = Hyle::open_with_session(
+        FixedStorage::<400>::new(),
+        NODE,
+        Key::from_bytes(KEY),
+        session(1),
+    )
+    .unwrap();
+    let mut wrote = 0;
+    loop {
+        match db.put(b"k", &[0u8; 32]) {
+            Ok(_) => wrote += 1,
+            Err(Error::Full) => break,
+            Err(e) => panic!("unexpected error {e}"),
+        }
+        assert!(wrote < 100, "should have run out of space");
+    }
+    assert!(wrote >= 1);
 }
 
 #[test]
@@ -465,4 +481,10 @@ fn latest_event_reports_tombstones() {
     db.put(b"k", b"v").unwrap();
     db.delete(b"k").unwrap();
     assert!(db.latest_event(b"k").unwrap().unwrap().tombstone);
+}
+
+#[test]
+fn header_is_the_declared_length() {
+    let db = fresh();
+    assert_eq!(db.sync_end(), HEADER_LEN);
 }

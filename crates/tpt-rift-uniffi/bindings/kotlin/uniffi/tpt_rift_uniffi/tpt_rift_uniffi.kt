@@ -713,7 +713,7 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_tpt_rift_uniffi_fn_free_syncstore(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun uniffi_tpt_rift_uniffi_fn_constructor_syncstore_open(`path`: RustBuffer.ByValue,`nodeId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_tpt_rift_uniffi_fn_constructor_syncstore_open(`path`: RustBuffer.ByValue,`nodeId`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_tpt_rift_uniffi_fn_method_syncstore_delete(`ptr`: Long,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -864,7 +864,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_tpt_rift_uniffi_checksum_method_syncstore_put() and 0xFFFF) != 17640) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_tpt_rift_uniffi_checksum_constructor_syncstore_open() and 0xFFFF) != 18877) {
+    if ((lib.uniffi_tpt_rift_uniffi_checksum_constructor_syncstore_open() and 0xFFFF) != 10186) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1528,14 +1528,15 @@ open class SyncStore: Disposable, AutoCloseable, SyncStoreInterface
      * Opens or creates the store at `path`. `node_id` is a decimal `u128`, and
      * each device needs its own.
      */
-    @Throws(SyncException::class) fun `open`(`path`: kotlin.String, `nodeId`: kotlin.String): SyncStore {
+    @Throws(SyncException::class) fun `open`(`path`: kotlin.String, `nodeId`: kotlin.String, `passphrase`: kotlin.String): SyncStore {
             return FfiConverterTypeSyncStore.lift(
     uniffiRustCallWithError(SyncException) { _status ->
     UniffiLib.uniffi_tpt_rift_uniffi_fn_constructor_syncstore_open(
     
         
         FfiConverterString.lower(`path`),
-        FfiConverterString.lower(`nodeId`),_status)
+        FfiConverterString.lower(`nodeId`),
+        FfiConverterString.lower(`passphrase`),_status)
 }
     )
     }

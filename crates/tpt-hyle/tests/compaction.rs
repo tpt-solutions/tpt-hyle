@@ -1,12 +1,13 @@
-use tpt_hyle::{Error, Hyle, Storage, VecStorage, HEADER_LEN};
+use tpt_hyle::{Error, Hyle, Key, Storage, VecStorage, HEADER_LEN};
 
 const NODE: u128 = 7;
+const KEY: [u8; 32] = [0x11; 32];
 
-fn fresh() -> Hyle<VecStorage, VecStorage> {
-    Hyle::open(VecStorage::new(), VecStorage::new(), NODE).unwrap()
+fn fresh() -> Hyle<VecStorage> {
+    Hyle::open_with_session(VecStorage::new(), NODE, Key::from_bytes(KEY), [1; 16]).unwrap()
 }
 
-fn read<St: Storage, Sy: Storage>(db: &mut Hyle<St, Sy>, key: &[u8]) -> Option<Vec<u8>> {
+fn read<S: Storage>(db: &mut Hyle<S>, key: &[u8]) -> Option<Vec<u8>> {
     let mut buf = [0u8; 256];
     db.get(key, &mut buf).unwrap().map(|n| buf[..n].to_vec())
 }
@@ -14,25 +15,19 @@ fn read<St: Storage, Sy: Storage>(db: &mut Hyle<St, Sy>, key: &[u8]) -> Option<V
 #[test]
 fn compaction_keeps_latest_event_per_key_and_tombstones() {
     let mut db = fresh();
-    db.put(b"a", b"one").unwrap(); // lamport 1, superseded
-    db.put(b"b", b"bee").unwrap(); // lamport 2, deleted below
-    db.put(b"a", b"two").unwrap(); // lamport 3, live
-    db.delete(b"b").unwrap(); // lamport 4, tombstone
+    db.put(b"a", b"one").unwrap();
+    db.put(b"b", b"bee").unwrap();
+    db.put(b"a", b"two").unwrap();
+    db.delete(b"b").unwrap();
     let old_gen = db.generation();
-    let old_state = db.state_len();
+    let old_len = db.sync_end();
 
-    let (state, sync) = (VecStorage::new(), VecStorage::new());
-    let mut compacted = db.compact_into(state, sync).unwrap();
-
+    let mut compacted = db.compact_into(VecStorage::new(), [2; 16]).unwrap();
     assert_eq!(compacted.generation(), old_gen + 1);
-    assert!(
-        compacted.state_len() < old_state,
-        "superseded values dropped"
-    );
+    assert!(compacted.sync_end() < old_len, "superseded writes dropped");
     assert_eq!(read(&mut compacted, b"a").as_deref(), Some(&b"two"[..]));
     assert_eq!(read(&mut compacted, b"b"), None);
 
-    // Two events survive: the live "a" and the tombstone for "b".
     let feed: Vec<_> = compacted
         .events_since(HEADER_LEN)
         .unwrap()
@@ -50,11 +45,7 @@ fn compaction_preserves_clock_and_keeps_writing() {
     db.put(b"k", b"w").unwrap();
     db.delete(b"k").unwrap();
     let before = db.lamport();
-
-    let mut compacted = db
-        .compact_into(VecStorage::new(), VecStorage::new())
-        .unwrap();
-    // Everything was a tombstone at the end, but the clock must not rewind.
+    let mut compacted = db.compact_into(VecStorage::new(), [2; 16]).unwrap();
     assert_eq!(compacted.lamport(), before);
     assert_eq!(compacted.put(b"new", b"x").unwrap().lamport, before + 1);
 }
@@ -63,9 +54,7 @@ fn compaction_preserves_clock_and_keeps_writing() {
 fn compaction_keeps_original_node_ids() {
     let mut db = fresh();
     db.put(b"k", b"v").unwrap();
-    let mut compacted = db
-        .compact_into(VecStorage::new(), VecStorage::new())
-        .unwrap();
+    let mut compacted = db.compact_into(VecStorage::new(), [2; 16]).unwrap();
     let ev = compacted
         .events_since(HEADER_LEN)
         .unwrap()
@@ -84,7 +73,7 @@ fn compaction_refuses_non_empty_target() {
     let mut dirty = VecStorage::new();
     dirty.append(b"junk").unwrap();
     assert!(matches!(
-        db.compact_into(dirty, VecStorage::new()),
+        db.compact_into(dirty, [2; 16]),
         Err(Error::TargetNotEmpty)
     ));
 }
@@ -95,34 +84,15 @@ fn compacted_store_reopens_and_old_cursors_are_detectably_stale() {
     db.put(b"a", b"1").unwrap();
     db.put(b"b", b"2").unwrap();
     let cursor_gen = db.generation();
-    let compacted = db
-        .compact_into(VecStorage::new(), VecStorage::new())
-        .unwrap();
+    let compacted = db.compact_into(VecStorage::new(), [2; 16]).unwrap();
     assert_ne!(compacted.generation(), cursor_gen);
 
-    let (state, sync) = compacted.into_parts();
-    let mut reopened = Hyle::open(state, sync, NODE).unwrap();
+    let storage = compacted.into_storage();
+    let mut reopened =
+        Hyle::open_with_session(storage, NODE, Key::from_bytes(KEY), [3; 16]).unwrap();
     assert_eq!(reopened.generation(), cursor_gen + 1);
     assert_eq!(read(&mut reopened, b"a").as_deref(), Some(&b"1"[..]));
     assert_eq!(read(&mut reopened, b"b").as_deref(), Some(&b"2"[..]));
-}
-
-#[test]
-fn mismatched_generations_are_refused_on_open() {
-    let mut db = fresh();
-    db.put(b"a", b"1").unwrap();
-    let (old_state, old_sync) = db.into_parts();
-    let mut db = Hyle::open(old_state.clone(), old_sync, NODE).unwrap();
-    let compacted = db
-        .compact_into(VecStorage::new(), VecStorage::new())
-        .unwrap();
-    let (_new_state, new_sync) = compacted.into_parts();
-
-    // Old state with new sync: what a crash between two renames would leave.
-    assert!(matches!(
-        Hyle::open(old_state, new_sync, NODE),
-        Err(Error::Corrupt(_))
-    ));
 }
 
 #[cfg(feature = "std")]
@@ -132,54 +102,52 @@ mod file {
 
     fn scratch(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("tpt-hyle-compact-{}-{}", std::process::id(), name));
+            std::env::temp_dir().join(format!("tpt-hyle-compact-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     #[test]
-    fn compact_file_swaps_generation_and_removes_old_state() {
+    fn compact_file_swaps_generation_and_leaves_one_file() {
         let dir = scratch("swap");
-        let base = dir.join("db");
-        let mut db = Hyle::open_file(&base, NODE).unwrap();
+        let path = dir.join("db");
+        let mut db = Hyle::open_file_with_key(&path, NODE, Key::from_bytes(KEY)).unwrap();
         db.put(b"a", b"1").unwrap();
         db.put(b"a", b"2").unwrap();
         db.put(b"gone", b"x").unwrap();
         db.delete(b"gone").unwrap();
 
-        let db = db.compact_file(&base).unwrap();
+        let mut db = db.compact_file(&path).unwrap();
         assert_eq!(db.generation(), 1);
+        assert_eq!(read(&mut db, b"a").as_deref(), Some(&b"2"[..]));
+        assert!(
+            !dir.join("db.tmp").exists(),
+            "the temp file is renamed away"
+        );
         drop(db);
 
-        assert!(dir.join("db.state.1").exists());
-        assert!(!dir.join("db.state.0").exists(), "old state removed");
-        assert!(!dir.join("db.sync.tmp").exists());
-
-        let mut db = Hyle::open_file(&base, NODE).unwrap();
+        let mut db = Hyle::open_file_with_key(&path, NODE, Key::from_bytes(KEY)).unwrap();
         assert_eq!(read(&mut db, b"a").as_deref(), Some(&b"2"[..]));
         assert_eq!(read(&mut db, b"gone"), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn leftovers_from_an_interrupted_compaction_are_cleaned_up() {
+    fn a_leftover_temp_file_does_not_affect_the_store() {
         let dir = scratch("crash");
-        let base = dir.join("db");
+        let path = dir.join("db");
         {
-            let mut db = Hyle::open_file(&base, NODE).unwrap();
+            let mut db = Hyle::open_file_with_key(&path, NODE, Key::from_bytes(KEY)).unwrap();
             db.put(b"a", b"1").unwrap();
         }
-        // Simulate a crash before the commit rename: a half-built new state
-        // file and a temp sync file exist beside the live generation 0.
-        std::fs::write(dir.join("db.state.1"), b"partial").unwrap();
-        std::fs::write(dir.join("db.sync.tmp"), b"partial").unwrap();
-
-        let mut db = Hyle::open_file(&base, NODE).unwrap();
+        // A compaction that died before its rename leaves a partial temp file.
+        std::fs::write(dir.join("db.tmp"), b"partial").unwrap();
+        let mut db = Hyle::open_file_with_key(&path, NODE, Key::from_bytes(KEY)).unwrap();
         assert_eq!(read(&mut db, b"a").as_deref(), Some(&b"1"[..]));
-        assert_eq!(db.generation(), 0);
-        assert!(!dir.join("db.state.1").exists());
-        assert!(!dir.join("db.sync.tmp").exists());
+        // The next compaction replaces the leftover rather than failing on it.
+        let db = db.compact_file(&path).unwrap();
+        assert_eq!(db.generation(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -1,10 +1,12 @@
 use tpt_rift_wasm::Store;
 use wasm_bindgen_test::*;
 
+const PASS: &[u8] = b"test passphrase";
+
 #[wasm_bindgen_test]
 fn two_stores_sync_by_passing_bytes() {
-    let mut a = Store::new("1").unwrap();
-    let mut b = Store::new("2").unwrap();
+    let mut a = Store::new("1", PASS).unwrap();
+    let mut b = Store::new("2", PASS).unwrap();
     a.put(b"note:1", b"from a").unwrap();
     b.put(b"note:2", b"from b").unwrap();
 
@@ -19,8 +21,8 @@ fn two_stores_sync_by_passing_bytes() {
 
 #[wasm_bindgen_test]
 fn duplicate_imports_are_harmless() {
-    let mut a = Store::new("1").unwrap();
-    let mut b = Store::new("2").unwrap();
+    let mut a = Store::new("1", PASS).unwrap();
+    let mut b = Store::new("2", PASS).unwrap();
     a.put(b"k", b"v").unwrap();
     let bytes = a.export("2").unwrap();
     assert_eq!(b.import(&bytes).unwrap(), 1);
@@ -30,8 +32,8 @@ fn duplicate_imports_are_harmless() {
 
 #[wasm_bindgen_test]
 fn deletes_propagate() {
-    let mut a = Store::new("1").unwrap();
-    let mut b = Store::new("2").unwrap();
+    let mut a = Store::new("1", PASS).unwrap();
+    let mut b = Store::new("2", PASS).unwrap();
     a.put(b"k", b"v").unwrap();
     b.import(&a.export("2").unwrap()).unwrap();
     assert!(a.delete(b"k").unwrap());
@@ -40,8 +42,28 @@ fn deletes_propagate() {
 }
 
 #[wasm_bindgen_test]
-fn malformed_bytes_are_an_error_not_a_trap() {
-    let mut a = Store::new("1").unwrap();
+fn saved_bytes_restore_the_store_with_the_passphrase() {
+    let mut a = Store::new("1", PASS).unwrap();
+    a.put(b"k", b"persisted").unwrap();
+    let bytes = a.save();
+    let mut restored = Store::load("1", PASS, &bytes).unwrap();
+    assert_eq!(
+        restored.get(b"k").unwrap().as_deref(),
+        Some(&b"persisted"[..])
+    );
+}
+
+#[wasm_bindgen_test]
+fn saved_bytes_do_not_open_with_the_wrong_passphrase() {
+    let mut a = Store::new("1", PASS).unwrap();
+    a.put(b"k", b"secret").unwrap();
+    let bytes = a.save();
+    assert!(Store::load("1", b"wrong", &bytes).is_err());
+}
+
+#[wasm_bindgen_test]
+fn malformed_input_is_an_error_not_a_trap() {
+    let mut a = Store::new("1", PASS).unwrap();
     assert!(a.import(b"not a delta").is_err());
-    assert!(Store::new("not a number").is_err());
+    assert!(Store::new("not a number", PASS).is_err());
 }

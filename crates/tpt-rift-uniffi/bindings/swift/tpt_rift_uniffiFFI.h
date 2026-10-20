@@ -255,7 +255,7 @@ void uniffi_tpt_rift_uniffi_fn_free_syncstore(uint64_t handle, RustCallStatus *_
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_CONSTRUCTOR_SYNCSTORE_OPEN
 #define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_CONSTRUCTOR_SYNCSTORE_OPEN
-uint64_t uniffi_tpt_rift_uniffi_fn_constructor_syncstore_open(RustBuffer path, RustBuffer node_id, RustCallStatus *_Nonnull out_status
+uint64_t uniffi_tpt_rift_uniffi_fn_constructor_syncstore_open(RustBuffer path, RustBuffer node_id, RustBuffer passphrase, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_DELETE

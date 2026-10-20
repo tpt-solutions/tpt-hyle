@@ -14,8 +14,24 @@ use tpt_rift_transport_ws::{connect_authorized, WebSocketTransport};
 
 const HUB_NODE: u128 = 1;
 
+static SESSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// An in-memory store with a fresh session, so no two opens share nonces.
+fn mem_hyle(node: u128) -> Hyle<VecStorage> {
+    let mut session = [0u8; 16];
+    let n = SESSIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    session[..8].copy_from_slice(&n.to_le_bytes());
+    Hyle::open_with_session(
+        VecStorage::new(),
+        node,
+        tpt_hyle::Key::from_bytes([0x5a; 32]),
+        session,
+    )
+    .unwrap()
+}
+
 struct Client {
-    replica: Replica<VecStorage, VecStorage>,
+    replica: Replica<VecStorage>,
     link: PeerLink,
     transport: WebSocketTransport<MaybeTlsStream<TcpStream>>,
 }
@@ -63,7 +79,7 @@ async fn start_hub_with_rate(tokens: Vec<TokenConfig>, rate: u32) -> std::net::S
         tokens,
     };
     let (hub_node, access) = Access::from_config(&config).unwrap();
-    let store = Hyle::open_file(&config.store, hub_node).unwrap();
+    let store = Hyle::open_file(&config.store, hub_node, b"test hub passphrase").unwrap();
     let hub: Hub = Arc::new(Mutex::new(Replica::new(store)));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -100,7 +116,7 @@ async fn client(addr: std::net::SocketAddr, token: &str, node: u128) -> Client {
     let transport = connect_authorized(&format!("ws://{addr}"), token)
         .await
         .unwrap();
-    let replica = Replica::new(Hyle::open(VecStorage::new(), VecStorage::new(), node).unwrap());
+    let replica = Replica::new(mem_hyle(node));
     let link = PeerLink::new(HUB_NODE, &replica);
     Client {
         replica,
@@ -374,12 +390,8 @@ async fn webrtc_peers_connect_through_the_hub_and_sync() {
     b_channel.wait_open(Duration::from_secs(20)).await.unwrap();
 
     // The data channel now carries deltas peer to peer, outside the hub.
-    let mut ra = tpt_rift::Replica::new(
-        tpt_hyle::Hyle::open(VecStorage::new(), VecStorage::new(), 10).unwrap(),
-    );
-    let mut rb = tpt_rift::Replica::new(
-        tpt_hyle::Hyle::open(VecStorage::new(), VecStorage::new(), 11).unwrap(),
-    );
+    let mut ra = tpt_rift::Replica::new(mem_hyle(10));
+    let mut rb = tpt_rift::Replica::new(mem_hyle(11));
     ra.store().put(b"direct", b"over webrtc").unwrap();
     let mut la = PeerLink::new(11, &ra);
     let mut lb = PeerLink::new(10, &rb);
