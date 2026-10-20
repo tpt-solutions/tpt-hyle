@@ -24,3 +24,4 @@ rand = "0.8"
 
 [dev-dependencies]
 tpt-rift-transport-webrtc = { workspace = true }
+tpt-hyle-rift = { workspace = true }

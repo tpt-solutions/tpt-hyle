@@ -80,7 +80,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] Message size limit and per-connection rate limit (token bucket, disconnect on excess)
 - [ ] TLS: deliberately not in the server. Expected from a reverse proxy, documented in docs/server.md
 - [ ] Docker image and deploy docs: Dockerfile and docs written, not built (no Docker daemon was running here)
-- [ ] End-to-end demo app syncing to self-hosted server
+- [x] End-to-end demo app syncing to self-hosted server (`notes` example, walkthrough in [docs/server.md](docs/server.md#demo-two-notes-clients); run with two clients against a local hub)
 
 ## Phase 4: P2P + edge (Year 4)
 

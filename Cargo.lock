@@ -2532,6 +2532,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tpt-hyle",
+ "tpt-hyle-rift",
  "tpt-rift",
  "tpt-rift-transport-webrtc",
  "tpt-rift-transport-ws",

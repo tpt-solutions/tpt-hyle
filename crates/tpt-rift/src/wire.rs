@@ -257,6 +257,42 @@ impl<'a> Reader<'a> {
     }
 }
 
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// Every 48-byte message is parsed or rejected. None panics. Such a
+    /// message is too short to hold a change, so it covers the header and
+    /// control paths.
+    #[kani::proof]
+    #[kani::unwind(2)]
+    fn decode_never_panics_on_short_input() {
+        let bytes: [u8; 48] = kani::any();
+        let _ = Delta::decode(&bytes);
+    }
+
+    /// Every 128-byte message, which can hold one change, is parsed or
+    /// rejected. None panics.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn decode_never_panics_on_one_change() {
+        let bytes: [u8; 128] = kani::any();
+        let _ = Delta::decode(&bytes);
+    }
+
+    /// The encoding is canonical: a message that decodes re-encodes to the
+    /// exact same bytes. So a peer cannot send two encodings of one delta,
+    /// and no byte is ignored.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn accepted_delta_reencodes_identically() {
+        let bytes: [u8; 128] = kani::any();
+        if let Ok(delta) = Delta::decode(&bytes) {
+            assert_eq!(delta.encode(), bytes.to_vec());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

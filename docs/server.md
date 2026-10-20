@@ -103,6 +103,51 @@ If any configured client has never acked in the current generation, nothing is
 collected. The store is still compacted. A client that is gone for good must be
 removed from the config first, and its unpushed writes are then lost.
 
+## Demo: two notes clients
+
+`crates/tpt-rift-server/examples/notes.rs` is a small command-line notes app.
+It keeps notes in a local store and syncs them with the hub. Use it to check a
+deployment end to end. Commands run from the repository root. The examples use
+`bash`; on Windows, run them from Git Bash, or use the equivalent PowerShell
+syntax.
+
+1. Create a token and config entry for each client. Use two client nodes, 10
+   and 11, and the hub on node 1:
+
+       target/debug/tpt-rift-server new-token     # run twice; keep each token
+       target/debug/tpt-rift-server hash-token <token>
+
+2. Create each client's store and read its public key. The notes app takes its
+   passphrase from `TPT_CLIENT_PASSPHRASE`:
+
+       TPT_CLIENT_PASSPHRASE=alice-pass cargo run -q -p tpt-rift-server --example notes -- \
+         alice.db ws://127.0.0.1:8080 10 1 put notes/1 "hello from alice"
+       TPT_HYLE_PASSPHRASE=alice-pass target/debug/tpt-hyle-cli public-key alice.db
+
+   Repeat for bob (node 11). Put both public keys and the token hashes in
+   `server.json`, with `read` and `write` set to `["notes/"]`. Set `listen` to
+   `127.0.0.1:8080`.
+
+3. Start the hub, then sync each client. Each client sends its own token in the
+   `TPT_CLIENT_TOKEN` environment variable:
+
+       TPT_HUB_PASSPHRASE=hub-pass target/debug/tpt-rift-server serve server.json &
+
+       TPT_CLIENT_PASSPHRASE=alice-pass TPT_CLIENT_TOKEN=<alice token> \
+         cargo run -q -p tpt-rift-server --example notes -- alice.db ws://127.0.0.1:8080 10 1 sync
+       TPT_CLIENT_PASSPHRASE=bob-pass TPT_CLIENT_TOKEN=<bob token> \
+         cargo run -q -p tpt-rift-server --example notes -- bob.db ws://127.0.0.1:8080 11 1 get notes/1
+
+   Bob reads `hello from alice`. Writes made offline sync the same way:
+   `put` saves locally, and `sync` sends the write to the hub and pulls the
+   other clients' writes.
+
+`sync` runs several paced rounds. The hub answers on its own poll interval, so
+one round can return before the reply arrives. A client whose public key is not
+in the config has its writes refused, and the hub logs `event signature does
+not verify`. The hub's own log shows a `connection closed` line each time a
+client finishes a sync. That is normal.
+
 ## Not yet built
 
 
