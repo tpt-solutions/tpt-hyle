@@ -10,6 +10,7 @@ members = [
     "crates/tpt-rift-transport-ws",
     "crates/tpt-rift-transport-webrtc",
     "crates/tpt-hyle-test-utils",
+    "crates/tpt-rift-discovery",
 ]
 
 [workspace.package]
@@ -35,4 +36,5 @@ proptest = "1.0"
 tpt-hyle = { path = "crates/tpt-hyle", version = "0.1.0", default-features = false }
 tpt-rift = { path = "crates/tpt-rift", version = "0.1.0" }
 tpt-rift-transport-ws = { path = "crates/tpt-rift-transport-ws", version = "0.1.0" }
+tpt-rift-transport-webrtc = { path = "crates/tpt-rift-transport-webrtc", version = "0.1.0" }
 tpt-hyle-rift = { path = "crates/tpt-hyle-rift", version = "0.1.0" }

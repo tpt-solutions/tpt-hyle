@@ -2135,6 +2135,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tpt-rift-discovery"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "tpt-rift-server"
 version = "0.1.0"
 dependencies = [
@@ -2146,6 +2153,7 @@ dependencies = [
  "tokio-tungstenite",
  "tpt-hyle",
  "tpt-rift",
+ "tpt-rift-transport-webrtc",
  "tpt-rift-transport-ws",
 ]
 
@@ -2153,6 +2161,10 @@ dependencies = [
 name = "tpt-rift-transport-webrtc"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "bytes",
+ "tokio",
+ "tpt-hyle",
  "tpt-rift",
  "webrtc",
 ]

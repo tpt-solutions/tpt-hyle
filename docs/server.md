@@ -100,3 +100,19 @@ proxy in front of it.
 daemon was running on the machine where this was done. The first build should
 be run by someone with a daemon. The `--locked` build depends on the committed
 `Cargo.lock`.
+
+## Signaling for WebRTC
+
+Two authenticated clients can open a direct WebRTC data channel by exchanging
+session descriptions through the hub. See
+[ADR 0012](adr/0012-webrtc-signaling.md). A client sends a text frame:
+
+    {"signal": {"to": "11", "kind": "offer", "sdp": "..."}}
+
+The hub relays it to node 11, if that node is connected, as:
+
+    {"signal": {"from": "10", "kind": "offer", "sdp": "..."}}
+
+The hub sets `from` itself. Signals to unconnected nodes are dropped silently.
+After the handshake, deltas travel on the data channel and do not pass through
+the hub. Peers behind NAT need ICE servers, which the server does not configure.

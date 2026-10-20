@@ -18,13 +18,15 @@
 //! The server does not terminate TLS. Run it behind a TLS-terminating reverse
 //! proxy whenever it is reachable from outside a trusted network.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::Mutex;
 use tpt_hyle::{FileStorage, Hyle};
 use tpt_rift::{Delta, PeerLink, Replica, RiftError, Transport};
@@ -183,18 +185,116 @@ pub fn screen_incoming(delta: Delta, auth: &Auth) -> Result<Delta, RiftError> {
     })
 }
 
+/// Connected nodes, by id, with a queue for signals addressed to each one.
+pub type Registry = Arc<std::sync::Mutex<HashMap<u128, UnboundedSender<String>>>>;
+
+/// Removes a node from the registry when its connection ends. Only removes
+/// the entry if it still belongs to this connection.
+struct Registration {
+    registry: Registry,
+    node: u128,
+    sender: UnboundedSender<String>,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.registry.lock() {
+            if map
+                .get(&self.node)
+                .is_some_and(|s| s.same_channel(&self.sender))
+            {
+                map.remove(&self.node);
+            }
+        }
+    }
+}
+
+/// Relays a signal from `from` to the node it names, if that node is
+/// connected. The server writes `from` itself. A client cannot choose it.
+/// Malformed signals are ignored.
+fn relay_signal(registry: &Registry, from: u128, text: &str) {
+    let Ok(envelope) = serde_json::from_str::<SignalIn>(text) else {
+        return;
+    };
+    let Ok(to) = envelope.signal.to.parse::<u128>() else {
+        return;
+    };
+    if envelope.signal.kind != "offer" && envelope.signal.kind != "answer" {
+        return;
+    }
+    let out = SignalOut {
+        signal: SignalFrom {
+            from: from.to_string(),
+            kind: envelope.signal.kind,
+            sdp: envelope.signal.sdp,
+        },
+    };
+    let Ok(text) = serde_json::to_string(&out) else {
+        return;
+    };
+    if let Ok(map) = registry.lock() {
+        if let Some(target) = map.get(&to) {
+            let _ = target.send(text);
+        }
+    }
+}
+
+/// What a client sends: `{"signal": {"to": "<node>", "kind": "...", "sdp": "..."}}`.
+#[derive(Serialize, Deserialize)]
+struct SignalIn {
+    signal: SignalTo,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SignalTo {
+    to: String,
+    kind: String,
+    sdp: String,
+}
+
+/// What the hub relays: the same, with `from` stamped by the hub.
+#[derive(Serialize, Deserialize)]
+struct SignalOut {
+    signal: SignalFrom,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SignalFrom {
+    from: String,
+    kind: String,
+    sdp: String,
+}
+
 /// Serves one authenticated connection until it closes or breaks a rule.
 pub async fn serve_connection(
     conn: WebSocketTransport<TcpStream>,
     auth: Auth,
     hub: Hub,
+    registry: Registry,
     poll: Duration,
 ) -> Result<(), RiftError> {
+    let (signal_tx, mut signals) = unbounded_channel::<String>();
+    if let Ok(mut map) = registry.lock() {
+        map.insert(auth.node_id, signal_tx.clone());
+    }
+    let _registration = Registration {
+        registry: registry.clone(),
+        node: auth.node_id,
+        sender: signal_tx,
+    };
+
     let mut link = {
         let hub = hub.lock().await;
         PeerLink::new(auth.node_id, &hub)
     };
     loop {
+        while let Some(text) = conn.take_text()? {
+            relay_signal(&registry, auth.node_id, &text);
+        }
+        while let Ok(text) = signals.try_recv() {
+            conn.send_text(&text).await?;
+        }
+
         while let Some(delta) = conn.receive().await? {
             let accepted = screen_incoming(delta, &auth)?;
             if !accepted.changes.is_empty() {
@@ -240,7 +340,16 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let hub: Hub = Arc::new(Mutex::new(Replica::new(store)));
     let listener = TcpListener::bind(&config.listen).await?;
     let poll = Duration::from_millis(config.poll_ms);
-    accept_loop(listener, access, hub, poll, config.max_message_bytes).await;
+    let registry: Registry = Arc::default();
+    accept_loop(
+        listener,
+        access,
+        hub,
+        registry,
+        poll,
+        config.max_message_bytes,
+    )
+    .await;
     Ok(())
 }
 
@@ -250,6 +359,7 @@ pub async fn accept_loop(
     listener: TcpListener,
     access: Access,
     hub: Hub,
+    registry: Registry,
     poll: Duration,
     max_bytes: usize,
 ) {
@@ -263,8 +373,9 @@ pub async fn accept_loop(
         };
         let access = access.clone();
         let hub = hub.clone();
+        let registry = registry.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle(stream, access, hub, poll, max_bytes).await {
+            if let Err(e) = handle(stream, access, hub, registry, poll, max_bytes).await {
                 eprintln!("connection from {peer} ended: {e}");
             }
         });
@@ -278,6 +389,7 @@ async fn handle(
     stream: TcpStream,
     access: Access,
     hub: Hub,
+    registry: Registry,
     poll: Duration,
     max_bytes: usize,
 ) -> Result<(), RiftError> {
@@ -300,7 +412,7 @@ async fn handle(
     let auth = granted.ok_or(RiftError::Protocol(
         "handshake accepted without credentials",
     ))?;
-    serve_connection(conn, auth, hub, poll).await
+    serve_connection(conn, auth, hub, registry, poll).await
 }
 
 fn unauthorized() -> tokio_tungstenite::tungstenite::handshake::server::ErrorResponse {
@@ -362,4 +474,39 @@ fn parse_hash(text: &str) -> Result<[u8; 32], ConfigError> {
         *byte = u8::from_str_radix(&text[2 * i..2 * i + 2], 16).map_err(|_| bad())?;
     }
     Ok(out)
+}
+
+/// A signal from another node. The hub has already stamped `from`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signal {
+    /// The node that sent the signal.
+    pub from: u128,
+    /// `"offer"` or `"answer"`.
+    pub kind: String,
+    /// The session description the peers exchange.
+    pub sdp: String,
+}
+
+/// Encodes a signal to send through the hub to node `to`. `kind` is `"offer"`
+/// or `"answer"`. Other kinds are ignored by the hub.
+pub fn encode_signal(to: u128, kind: &str, sdp: &str) -> String {
+    let envelope = SignalIn {
+        signal: SignalTo {
+            to: to.to_string(),
+            kind: kind.to_string(),
+            sdp: sdp.to_string(),
+        },
+    };
+    serde_json::to_string(&envelope).expect("a signal always encodes")
+}
+
+/// Decodes a signal the hub relayed to this node. Returns `None` for anything
+/// else, including frames without a numeric `from`.
+pub fn decode_signal(text: &str) -> Option<Signal> {
+    let envelope: SignalOut = serde_json::from_str(text).ok()?;
+    Some(Signal {
+        from: envelope.signal.from.parse().ok()?,
+        kind: envelope.signal.kind,
+        sdp: envelope.signal.sdp,
+    })
 }

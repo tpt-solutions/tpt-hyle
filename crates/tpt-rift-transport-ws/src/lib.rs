@@ -29,6 +29,7 @@ type Inbox = Arc<Mutex<VecDeque<Delta>>>;
 pub struct WebSocketTransport<S> {
     sink: tokio::sync::Mutex<SplitSink<WebSocketStream<S>, Message>>,
     inbox: Inbox,
+    text_inbox: Arc<Mutex<VecDeque<String>>>,
     closed: Arc<AtomicBool>,
     reader: tokio::task::JoinHandle<()>,
 }
@@ -41,13 +42,22 @@ where
     pub fn new(ws: WebSocketStream<S>) -> Self {
         let (sink, mut stream) = ws.split();
         let inbox: Inbox = Arc::default();
+        let text_inbox: Arc<Mutex<VecDeque<String>>> = Arc::default();
         let closed = Arc::new(AtomicBool::new(false));
 
         let q = inbox.clone();
+        let texts = text_inbox.clone();
         let flag = closed.clone();
         let reader = tokio::spawn(async move {
             while let Some(frame) = stream.next().await {
                 match frame {
+                    Ok(Message::Text(text)) => {
+                        if let Ok(mut queue) = texts.lock() {
+                            queue.push_back(text);
+                        } else {
+                            break;
+                        }
+                    }
                     Ok(Message::Binary(bytes)) => match Delta::decode(&bytes) {
                         Ok(delta) => {
                             if let Ok(mut queue) = q.lock() {
@@ -70,9 +80,30 @@ where
         Self {
             sink: tokio::sync::Mutex::new(sink),
             inbox,
+            text_inbox,
             closed,
             reader,
         }
+    }
+
+    /// Sends a text frame. Text frames carry signaling, not deltas, so they
+    /// never reach the sync engine.
+    pub async fn send_text(&self, text: &str) -> Result<(), RiftError> {
+        self.sink
+            .lock()
+            .await
+            .send(Message::Text(text.to_string()))
+            .await
+            .map_err(transport_err)
+    }
+
+    /// The next text frame that has arrived, if any. Does not wait.
+    pub fn take_text(&self) -> Result<Option<String>, RiftError> {
+        Ok(self
+            .text_inbox
+            .lock()
+            .map_err(|_| RiftError::Transport("text inbox poisoned".into()))?
+            .pop_front())
     }
 }
 

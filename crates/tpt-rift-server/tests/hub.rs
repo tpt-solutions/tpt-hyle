@@ -6,7 +6,10 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::MaybeTlsStream;
 use tpt_hyle::{Hyle, VecStorage};
 use tpt_rift::{Change, Delta, PeerLink, Replica, Transport};
-use tpt_rift_server::{accept_loop, hash_token, Access, Config, Hub, TokenConfig};
+use tpt_rift_server::{
+    accept_loop, decode_signal, encode_signal, hash_token, Access, Config, Hub, Registry,
+    TokenConfig,
+};
 use tpt_rift_transport_ws::{connect_authorized, WebSocketTransport};
 
 const HUB_NODE: u128 = 1;
@@ -63,6 +66,7 @@ async fn start_hub(tokens: Vec<TokenConfig>) -> std::net::SocketAddr {
         listener,
         access,
         hub,
+        Registry::default(),
         Duration::from_millis(5),
         1 << 20,
     ));
@@ -279,4 +283,110 @@ async fn an_oversized_message_closes_the_link() {
         .unwrap_or(false),
     };
     assert!(closed, "an oversized message must not be accepted");
+}
+
+async fn next_signal(client: &mut Client) -> tpt_rift_server::Signal {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(text) = client.transport.take_text().unwrap() {
+                if let Some(signal) = decode_signal(&text) {
+                    return signal;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("a signal should arrive")
+}
+
+#[tokio::test]
+async fn signals_are_relayed_with_the_origin_stamped_by_the_hub() {
+    let addr = start_hub(vec![entry("ta", 10, &[], &[]), entry("tb", 11, &[], &[])]).await;
+    let a = client(addr, "ta", 10).await;
+    let mut b = client(addr, "tb", 11).await;
+
+    a.transport
+        .send_text(&encode_signal(11, "offer", "v=0 sdp-from-a"))
+        .await
+        .unwrap();
+    let got = next_signal(&mut b).await;
+    assert_eq!(got.from, 10, "the hub stamps the origin, not the client");
+    assert_eq!(got.kind, "offer");
+    assert_eq!(got.sdp, "v=0 sdp-from-a");
+}
+
+#[tokio::test]
+async fn a_signal_to_an_unconnected_node_is_dropped() {
+    let addr = start_hub(vec![entry("ta", 10, &[], &[])]).await;
+    let a = client(addr, "ta", 10).await;
+    a.transport
+        .send_text(&encode_signal(99, "offer", "lost"))
+        .await
+        .unwrap();
+    // The sender stays connected, so the hub did not treat it as an error.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    a.transport
+        .send_text(&encode_signal(10, "answer", "still here"))
+        .await
+        .expect("the connection should survive an unroutable signal");
+}
+
+#[tokio::test]
+async fn webrtc_peers_connect_through_the_hub_and_sync() {
+    use tpt_rift_transport_webrtc::{accept, create_offer};
+
+    let addr = start_hub(vec![
+        entry("ta", 10, &[""], &[""]),
+        entry("tb", 11, &[""], &[""]),
+    ])
+    .await;
+    let mut a = client(addr, "ta", 10).await;
+    let mut b = client(addr, "tb", 11).await;
+
+    // A offers, through the hub.
+    let offer = create_offer().await.unwrap();
+    a.transport
+        .send_text(&encode_signal(11, "offer", offer.sdp()))
+        .await
+        .unwrap();
+
+    // B answers, through the hub.
+    let got = next_signal(&mut b).await;
+    assert_eq!(got.kind, "offer");
+    let (b_channel, answer_sdp) = accept(got.sdp).await.unwrap();
+    b.transport
+        .send_text(&encode_signal(10, "answer", &answer_sdp))
+        .await
+        .unwrap();
+
+    // A completes the connection with the answer.
+    let got = next_signal(&mut a).await;
+    assert_eq!(got.kind, "answer");
+    let a_channel = offer.complete(got.sdp).await.unwrap();
+    a_channel.wait_open(Duration::from_secs(20)).await.unwrap();
+    b_channel.wait_open(Duration::from_secs(20)).await.unwrap();
+
+    // The data channel now carries deltas peer to peer, outside the hub.
+    let mut ra = tpt_rift::Replica::new(
+        tpt_hyle::Hyle::open(VecStorage::new(), VecStorage::new(), 10).unwrap(),
+    );
+    let mut rb = tpt_rift::Replica::new(
+        tpt_hyle::Hyle::open(VecStorage::new(), VecStorage::new(), 11).unwrap(),
+    );
+    ra.store().put(b"direct", b"over webrtc").unwrap();
+    let mut la = PeerLink::new(11, &ra);
+    let mut lb = PeerLink::new(10, &rb);
+    let done = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let _ = tpt_rift::sync_round(&mut ra, &mut la, &a_channel, 16).await;
+            let _ = tpt_rift::sync_round(&mut rb, &mut lb, &b_channel, 16).await;
+            if rb.store().contains_key(b"direct").unwrap() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(done.is_ok(), "the data channel did not carry the delta");
 }

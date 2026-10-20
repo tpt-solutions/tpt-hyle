@@ -201,3 +201,33 @@ impl ChangeEvent {
         })
     }
 }
+
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// Every possible 56-byte sync record is either decoded or rejected. None
+    /// panics.
+    #[kani::proof]
+    fn decode_record_never_panics() {
+        let rec: [u8; SYNC_RECORD_LEN] = kani::any();
+        let _ = decode_record(&rec);
+    }
+
+    /// Every possible 32-byte header is either accepted or rejected. None
+    /// panics.
+    #[kani::proof]
+    fn check_header_never_panics() {
+        let header: [u8; HEADER_LEN as usize] = kani::any();
+        let _ = check_header(&header, STATE_MAGIC);
+    }
+
+    /// A record that decodes as data has a crc that matches its bytes.
+    #[kani::proof]
+    fn decoded_data_records_have_valid_checksums() {
+        let rec: [u8; SYNC_RECORD_LEN] = kani::any();
+        if let Ok(Record::Data(_)) = decode_record(&rec) {
+            assert_eq!(le_u32(&rec[0..4]), crc32c(&rec[4..]));
+        }
+    }
+}

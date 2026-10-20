@@ -274,3 +274,43 @@ impl Storage for FileStorage {
         Ok(())
     }
 }
+
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// Any read on a fixed storage either fills the buffer from inside the
+    /// written region, or returns an error. It never reads past the end.
+    #[kani::proof]
+    fn fixed_read_stays_in_bounds() {
+        let mut s = FixedStorage::<16>::new();
+        let written: usize = kani::any();
+        kani::assume(written <= 16);
+        let _ = s.append(&[7u8; 16][..written]);
+
+        let offset: u64 = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= 8);
+        let mut buf = [0u8; 8];
+        let result = s.read_at(offset, &mut buf[..len]);
+        if result.is_ok() {
+            assert!(offset as u128 + len as u128 <= s.len() as u128);
+        }
+    }
+
+    /// Any truncation either shrinks the region or is refused, and a refused
+    /// truncation leaves the length unchanged.
+    #[kani::proof]
+    fn truncate_never_grows() {
+        let mut s = FixedStorage::<16>::new();
+        let _ = s.append(&[1u8; 8]);
+        let before = s.len();
+        let target: u64 = kani::any();
+        let result = s.truncate(target);
+        if result.is_ok() {
+            assert!(s.len() <= before);
+        } else {
+            assert_eq!(s.len(), before);
+        }
+    }
+}

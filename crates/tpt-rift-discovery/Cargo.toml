@@ -1,0 +1,15 @@
+[package]
+name = "tpt-rift-discovery"
+description = "LAN discovery for tpt-rift peers, by UDP announcements"
+readme = "README.md"
+keywords = ["discovery", "lan", "udp", "sync", "tpt-rift"]
+categories = ["network-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio = { workspace = true }

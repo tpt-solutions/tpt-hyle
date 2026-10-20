@@ -20,3 +20,6 @@ json = ["alloc", "dep:serde", "dep:serde_json"]
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["alloc"], optional = true }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"], optional = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
