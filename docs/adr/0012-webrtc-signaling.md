@@ -38,7 +38,7 @@ one option.
 
 ## Limits
 
-- **No ICE servers.** The data channel uses host candidates only, which covers
+- **ICE servers are opt-in.** `IceConfig` takes STUN and TURN servers. STUN is tested against a test responder. TURN is passed through, but untested here, since it needs a relay. The default is host candidates only, which covers
   peers on one LAN. Peers behind NAT need STUN, and TURN for symmetric NAT.
   Neither is configured. Adding them is a config change, and the relay already
   carries everything a TURN credential would need.

@@ -30,6 +30,8 @@ use tpt_rift::{Delta, RiftError, Transport};
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
+use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
+use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
@@ -102,10 +104,55 @@ async fn attach(dc: &Arc<RTCDataChannel>, shared: &Arc<Shared>) {
     }
 }
 
-async fn new_connection() -> Result<Arc<RTCPeerConnection>, RiftError> {
+/// ICE servers for NAT traversal. The default is empty: host candidates only.
+#[derive(Debug, Clone, Default)]
+pub struct IceConfig {
+    /// STUN server URLs, such as `stun:stun.example.org:3478`. These let a peer
+    /// learn its public address.
+    pub stun_urls: Vec<String>,
+    /// TURN relays, for peers behind symmetric NAT.
+    pub turn: Vec<TurnServer>,
+}
+
+/// A TURN relay with its long-term credentials.
+#[derive(Debug, Clone)]
+pub struct TurnServer {
+    /// A `turn:` or `turns:` URL.
+    pub url: String,
+    /// The username for the relay.
+    pub username: String,
+    /// The password for the relay.
+    pub credential: String,
+}
+
+impl IceConfig {
+    fn to_rtc(&self) -> RTCConfiguration {
+        let mut servers = Vec::new();
+        if !self.stun_urls.is_empty() {
+            servers.push(RTCIceServer {
+                urls: self.stun_urls.clone(),
+                ..Default::default()
+            });
+        }
+        for turn in &self.turn {
+            servers.push(RTCIceServer {
+                urls: vec![turn.url.clone()],
+                username: turn.username.clone(),
+                credential: turn.credential.clone(),
+                credential_type: RTCIceCredentialType::Password,
+            });
+        }
+        RTCConfiguration {
+            ice_servers: servers,
+            ..Default::default()
+        }
+    }
+}
+
+async fn new_connection(ice: &IceConfig) -> Result<Arc<RTCPeerConnection>, RiftError> {
     let api = APIBuilder::new().build();
     let pc = api
-        .new_peer_connection(RTCConfiguration::default())
+        .new_peer_connection(ice.to_rtc())
         .await
         .map_err(transport_err)?;
     Ok(Arc::new(pc))
@@ -141,7 +188,12 @@ impl Offer {
 
 /// Creates the offering side of a connection.
 pub async fn create_offer() -> Result<Offer, RiftError> {
-    let pc = new_connection().await?;
+    create_offer_with(&IceConfig::default()).await
+}
+
+/// Creates the offering side, using the given ICE servers.
+pub async fn create_offer_with(ice: &IceConfig) -> Result<Offer, RiftError> {
+    let pc = new_connection(ice).await?;
     let shared = Arc::new(Shared::default());
     let dc = pc
         .create_data_channel(CHANNEL_LABEL, None)
@@ -170,7 +222,15 @@ pub async fn create_offer() -> Result<Offer, RiftError> {
 
 /// Accepts an offer and returns the transport and the answer to send back.
 pub async fn accept(offer_sdp: String) -> Result<(WebRtcTransport, String), RiftError> {
-    let pc = new_connection().await?;
+    accept_with(&IceConfig::default(), offer_sdp).await
+}
+
+/// Accepts an offer, using the given ICE servers.
+pub async fn accept_with(
+    ice: &IceConfig,
+    offer_sdp: String,
+) -> Result<(WebRtcTransport, String), RiftError> {
+    let pc = new_connection(ice).await?;
     let shared = Arc::new(Shared::default());
 
     let handler_shared = shared.clone();

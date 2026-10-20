@@ -84,7 +84,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 
 ## Phase 4: P2P + edge (Year 4)
 
-- [x] `tpt-rift-transport-webrtc`: data-channel transport, signaling relayed through the hub ([ADR 0012](docs/adr/0012-webrtc-signaling.md)). Host candidates only; no STUN or TURN
+- [x] `tpt-rift-transport-webrtc`: data-channel transport, signaling relayed through the hub ([ADR 0012](docs/adr/0012-webrtc-signaling.md)). STUN is tested; TURN is passed through but untested
 - [x] LAN discovery by UDP broadcast, with unauthenticated announcements ([ADR 0011](docs/adr/0011-lan-discovery.md)). The broadcast path itself is not tested; loopback tests use unicast
 - [x] `tpt-rift-wasm`: wasm-bindgen API over an in-memory store, tested under Node ([ADR 0010](docs/adr/0010-wasm-bindings.md)). IndexedDB persistence is not built
 - [ ] Browser demo: offline web app syncing P2P (the Node demo covers the same calls; no page yet)
