@@ -20,11 +20,13 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key as CipherKey, XChaCha20Poly1305, XNonce};
 use sha2::{Digest, Sha256};
 
+use ed25519_dalek::{Signer, SigningKey};
+
 use crate::checksum::fnv1a;
 use crate::format::{
-    decode_data, ChangeEvent, CommitPayload, DataFields, DataPayload, FrameHeader, Header,
-    CHECK_LEN, DATA_FIXED_LEN, FRAME_HEADER_LEN, HEADER_LEN, KEY_CHECK_PLAIN, KIND_COMMIT,
-    KIND_DATA, MAX_KEY_LEN, MAX_SEALED_LEN, TAG_LEN,
+    decode_data, event_message, ChangeEvent, CommitPayload, DataFields, DataPayload, FrameHeader,
+    Header, CHECK_LEN, DATA_FIXED_LEN, EVENT_SIG_LEN, FRAME_HEADER_LEN, HEADER_LEN,
+    KEY_CHECK_PLAIN, KIND_COMMIT, KIND_DATA, MAX_KEY_LEN, MAX_SEALED_LEN, TAG_LEN,
 };
 #[cfg(feature = "std")]
 use crate::storage::FileStorage;
@@ -46,6 +48,16 @@ impl Key {
     /// for unrelated data.
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
+    }
+
+    /// Seed of this node's Ed25519 signing key. It comes from the store key and
+    /// the node id, so it is stable across opens and is never stored.
+    fn signing_seed(&self, node_id: u128) -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update(b"tpt-hyle signing key v1");
+        h.update(self.0);
+        h.update(node_id.to_le_bytes());
+        h.finalize().into()
     }
 
     /// Derives a key from a passphrase with Argon2id. The salt is stored in the
@@ -81,6 +93,7 @@ enum Salt {
 pub struct Hyle<S: Storage> {
     storage: S,
     key: Key,
+    signer: SigningKey,
     salt: [u8; 16],
     node_id: u128,
     generation: u32,
@@ -222,9 +235,11 @@ impl<S: Storage> Hyle<S> {
             header
         };
 
+        let signer = SigningKey::from_bytes(&key.signing_seed(node_id));
         let mut store = Self {
             storage,
             key,
+            signer,
             salt: header.salt,
             node_id,
             generation: header.generation,
@@ -239,6 +254,30 @@ impl<S: Storage> Hyle<S> {
     }
 
     /// The node id this store writes under.
+    /// This node's Ed25519 public key. Peers check this node's events with it.
+    pub fn public_key(&self) -> [u8; 32] {
+        self.signer.verifying_key().to_bytes()
+    }
+
+    /// The signature stored with an event, which the issuing node made.
+    pub fn event_signature(&mut self, ev: &ChangeEvent) -> Result<[u8; EVENT_SIG_LEN], Error> {
+        let (_, plain) = self.data_at(ev.payload_offset)?;
+        Ok(signature_in(&plain))
+    }
+
+    /// Signs an event made by this node.
+    fn sign(
+        &self,
+        lamport: u64,
+        node_id: u128,
+        tombstone: bool,
+        key: &[u8],
+        value: &[u8],
+    ) -> [u8; EVENT_SIG_LEN] {
+        let message = event_message(node_id, lamport, tombstone, key, value);
+        self.signer.sign(&message).to_bytes()
+    }
+
     pub fn node_id(&self) -> u128 {
         self.node_id
     }
@@ -301,9 +340,10 @@ impl<S: Storage> Hyle<S> {
         lamport: u64,
         node_id: u128,
         tombstone: bool,
+        signature: [u8; EVENT_SIG_LEN],
     ) -> Result<ChangeEvent, Error> {
         let mut batch = self.batch()?;
-        let ev = batch.put_remote(key, value, lamport, node_id, tombstone)?;
+        let ev = batch.put_remote(key, value, lamport, node_id, tombstone, signature)?;
         batch.commit()?;
         Ok(ev)
     }
@@ -470,8 +510,16 @@ impl<S: Storage> Hyle<S> {
                 continue;
             }
             let (fields, plain) = self.data_at(ev.payload_offset)?;
-            let value = &plain[DATA_FIXED_LEN + fields.key_len as usize..];
-            batch.put_remote(&keys[i], value, ev.lamport, ev.node_id, ev.tombstone)?;
+            let value = value_of(&plain, fields.key_len as usize);
+            let signature = signature_in(&plain);
+            batch.put_remote(
+                &keys[i],
+                value,
+                ev.lamport,
+                ev.node_id,
+                ev.tombstone,
+                signature,
+            )?;
         }
         if self.lamport > 0 {
             batch.commit_forced()?;
@@ -503,7 +551,7 @@ impl<S: Storage> Hyle<S> {
             }
             if let Some(ev) = ev {
                 let (fields, plain) = self.data_at(ev.payload_offset)?;
-                let value = plain[DATA_FIXED_LEN + fields.key_len as usize..].to_vec();
+                let value = value_of(&plain, fields.key_len as usize).to_vec();
                 out.push((key, value));
             }
         }
@@ -526,8 +574,7 @@ impl<S: Storage> Hyle<S> {
             _ => return Ok(None),
         };
         let (fields, plain) = self.data_at(ev.payload_offset)?;
-        let start = DATA_FIXED_LEN + fields.key_len as usize;
-        Ok(Some(plain[start..].to_vec()))
+        Ok(Some(value_of(&plain, fields.key_len as usize).to_vec()))
     }
 
     /// Seals a plaintext as a frame of `kind`. The nonce is the session prefix
@@ -833,7 +880,7 @@ impl<S: Storage> Batch<'_, S> {
             .checked_add(1)
             .ok_or(Error::LamportOverflow)?;
         let node_id = self.store.node_id;
-        let ev = self.write(key, value, false, lamport, node_id)?;
+        let ev = self.write(key, value, false, lamport, node_id, None)?;
         self.store.lamport = lamport;
         Ok(ev)
     }
@@ -849,7 +896,7 @@ impl<S: Storage> Batch<'_, S> {
                     .checked_add(1)
                     .ok_or(Error::LamportOverflow)?;
                 let node_id = self.store.node_id;
-                self.write(key, &[], true, lamport, node_id)?;
+                self.write(key, &[], true, lamport, node_id, None)?;
                 self.store.lamport = lamport;
                 Ok(true)
             }
@@ -866,13 +913,14 @@ impl<S: Storage> Batch<'_, S> {
         lamport: u64,
         node_id: u128,
         tombstone: bool,
+        signature: [u8; EVENT_SIG_LEN],
     ) -> Result<ChangeEvent, Error> {
         check_key(key)?;
         check_value(value)?;
         if tombstone && !value.is_empty() {
             return Err(Error::TombstoneWithValue);
         }
-        let ev = self.write(key, value, tombstone, lamport, node_id)?;
+        let ev = self.write(key, value, tombstone, lamport, node_id, Some(signature))?;
         self.store.lamport = max(self.store.lamport, lamport);
         Ok(ev)
     }
@@ -884,16 +932,22 @@ impl<S: Storage> Batch<'_, S> {
         tombstone: bool,
         lamport: u64,
         node_id: u128,
+        signature: Option<[u8; EVENT_SIG_LEN]>,
     ) -> Result<ChangeEvent, Error> {
         if self.store.failed {
             return Err(Error::Poisoned);
         }
+        let signature = match signature {
+            Some(sig) => sig,
+            None => self.store.sign(lamport, node_id, tombstone, key, value),
+        };
         let plain = DataPayload {
             lamport,
             node_id,
             tombstone,
             key,
             value,
+            signature,
         }
         .encode();
         let frame = self.store.seal(KIND_DATA, &plain)?;
@@ -1126,4 +1180,16 @@ fn check_value(value: &[u8]) -> Result<(), Error> {
         return Err(Error::ValueTooLarge);
     }
     Ok(())
+}
+
+/// The value inside a data plaintext, without the signature that follows it.
+fn value_of(plain: &[u8], key_len: usize) -> &[u8] {
+    &plain[DATA_FIXED_LEN + key_len..plain.len() - EVENT_SIG_LEN]
+}
+
+/// The signature at the end of a data plaintext.
+fn signature_in(plain: &[u8]) -> [u8; EVENT_SIG_LEN] {
+    let mut sig = [0u8; EVENT_SIG_LEN];
+    sig.copy_from_slice(&plain[plain.len() - EVENT_SIG_LEN..]);
+    sig
 }

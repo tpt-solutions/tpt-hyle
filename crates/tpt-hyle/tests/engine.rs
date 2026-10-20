@@ -416,7 +416,7 @@ fn file_backed_store_survives_reopen() {
 #[test]
 fn fixed_storage_is_a_storage_and_reports_full() {
     let mut db = Hyle::open_with_session(
-        FixedStorage::<400>::new(),
+        FixedStorage::<600>::new(),
         NODE,
         Key::from_bytes(KEY),
         session(1),
@@ -452,10 +452,35 @@ fn storage_trait_is_used_through_vec_backend() {
     assert!(matches!(s.truncate(9), Err(Error::OutOfBounds { .. })));
 }
 
+/// The signature `node` puts on a write. A scratch store with the same key
+/// and node id makes the write at `lamport`, so the signature is the one that
+/// node would produce.
+fn signature_for(node: u128, lamport: u64, key: &[u8], value: &[u8], tombstone: bool) -> [u8; 64] {
+    let mut scratch =
+        Hyle::open_with_session(VecStorage::new(), node, Key::from_bytes(KEY), session(9)).unwrap();
+    if tombstone {
+        scratch.observe_lamport(lamport - 2);
+        scratch.put(key, b"x").unwrap();
+        scratch.delete(key).unwrap();
+    } else {
+        scratch.observe_lamport(lamport - 1);
+        scratch.put(key, value).unwrap();
+    }
+    let ev = scratch
+        .events_since(HEADER_LEN)
+        .unwrap()
+        .map(|r| r.unwrap().1)
+        .last()
+        .unwrap();
+    scratch.event_signature(&ev).unwrap()
+}
+
 #[test]
 fn remote_write_keeps_its_clock_and_origin() {
     let mut db = fresh();
-    db.put_remote(b"k", b"from-peer", 50, 9, false).unwrap();
+    let sig = signature_for(9, 50, b"k", b"from-peer", false);
+    db.put_remote(b"k", b"from-peer", 50, 9, false, sig)
+        .unwrap();
     assert_eq!(db.lamport(), 50, "clock covers the remote timestamp");
     let latest = db.latest_event(b"k").unwrap().unwrap();
     assert_eq!((latest.lamport, latest.node_id), (50, 9));
@@ -467,10 +492,11 @@ fn remote_write_keeps_its_clock_and_origin() {
 fn remote_tombstone_must_not_carry_a_value() {
     let mut db = fresh();
     assert!(matches!(
-        db.put_remote(b"k", b"x", 1, 2, true),
+        db.put_remote(b"k", b"x", 1, 2, true, [0; 64]),
         Err(Error::TombstoneWithValue)
     ));
-    db.put_remote(b"k", b"", 1, 2, true).unwrap();
+    let sig = signature_for(2, 2, b"k", b"", true);
+    db.put_remote(b"k", b"", 2, 2, true, sig).unwrap();
     assert!(!db.contains_key(b"k").unwrap());
 }
 

@@ -1,4 +1,4 @@
-# On-disk format, version 3
+# On-disk format, version 4
 
 Written for: engineers who need to read, verify, or port a store file.
 
@@ -12,7 +12,7 @@ without the passphrase. All integers are little-endian. The code is
 | Offset | Length | Field                | Notes                                          |
 |-------:|-------:|----------------------|------------------------------------------------|
 | 0      | 4      | magic                | `HYLG`                                         |
-| 4      | 2      | version              | `3`                                            |
+| 4      | 2      | version              | `4`                                            |
 | 6      | 2      | reserved             | must be zero                                   |
 | 8      | 16     | node id              | `u128`, fixed for the life of the store        |
 | 24     | 4      | generation           | `u32`, incremented by compaction               |
@@ -67,9 +67,34 @@ One write or delete. The plaintext is:
 | 27     | 4      | value_len   |                                         |
 | 31     | key_len | key        |                                         |
 | …      | value_len | value    | empty for a tombstone                   |
+| …      | 64     | signature  | Ed25519 signature by the issuing node   |
 
-The plaintext must be exactly `31 + key_len + value_len` bytes. Any other
+The plaintext must be exactly `31 + key_len + value_len + 64` bytes. Any other
 length is rejected.
+
+### Signatures
+
+Every data frame carries the issuing node's Ed25519 signature. The signed
+message is:
+
+    "tpt-hyle event v1" ‖ node_id (16) ‖ lamport (8) ‖ tombstone (1)
+    ‖ key_len (2) ‖ key ‖ value_len (4) ‖ value
+
+Every field is fixed-width or length-prefixed, so two events never produce the
+same bytes. The signature covers the event, not the frame: the nonce, the batch,
+and the file position are not signed.
+
+A node's signing key is derived from the store key and its node id, with
+SHA-256 over `"tpt-hyle signing key v1" ‖ store key ‖ node_id`. It is never
+stored, and it is the same every time the store opens. Its public key is
+`Hyle::public_key()`, which `tpt-hyle-cli public-key` prints.
+
+Compaction copies each event with its origin's signature. It does not re-sign,
+so a relay's copy of an event still checks against the origin's key.
+
+Verification uses strict Ed25519 rules: a non-canonical signature or a weak key
+is refused. Verification is not done when the store reads a frame. It is done by
+the replica, when it imports a change from a peer.
 
 ### Commit frame
 
@@ -156,12 +181,14 @@ stale, so the holder must not resume from its offset.
   data, wrong keys, nonce continuity across rollbacks, and compaction.
 - The `tpt-hyle-cli verify` command authenticates every frame of a store.
 
-## Not in version 3
+## Not in version 4
 
-- No per-event signatures. Authorship is the node id, and any holder of the key
-  can write as any node. Signed events are planned.
-- No tombstone collection. Compaction keeps the latest event per key, including
-  tombstones, so a deleted key stays deleted on peers that have not yet seen the
-  delete. Tombstone garbage collection with peer acknowledgements is planned.
+- Any holder of the store passphrase can write as any node, because each node's
+  signing key is derived from it. Signatures prove which store wrote an event,
+  not which person did. Protecting a node key separately needs a different key
+  source, which the format does not provide.
+- Tombstones are removed by compaction only, and only when the server says
+  every client has acknowledged them. The format does not record acks. See
+  [ADR 0014](adr/0014-tombstone-collection.md).
 - The format does not hide the number of frames, their sizes, or their timing.
   Those leak through the file size and the frame count.

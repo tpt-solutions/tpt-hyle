@@ -13,6 +13,8 @@
 //!   vouch for either.
 //! - A change from the client's own node whose key is outside its write
 //!   prefixes closes the connection.
+//! - A change from the client's own node must carry a signature that verifies
+//!   under the client's public key. Otherwise the connection closes.
 //! - Export to a client includes only keys it may read.
 //! - A client sends an ack after it has caught up with the hub. The hub keeps
 //!   the latest ack per client. Changes at or below the lowest clock acked by
@@ -36,7 +38,7 @@ use sha2::{Digest, Sha256};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::Mutex;
-use tpt_hyle::{FileStorage, Hyle};
+use tpt_hyle::{verify_event, FileStorage, Hyle};
 use tpt_rift::{Delta, PeerCursor, PeerLink, Replica, RiftError, Transport};
 use tpt_rift_transport_ws::{accept_with, WebSocketTransport};
 
@@ -97,6 +99,9 @@ pub struct TokenConfig {
     pub sha256: String,
     /// The client's node id, in decimal.
     pub node_id: String,
+    /// The client's Ed25519 public key, as 64 hex digits. Every change the
+    /// client sends must be signed by the matching private key.
+    pub public_key: String,
     /// Key prefixes the client may read. Empty means nothing.
     #[serde(default)]
     pub read: Vec<String>,
@@ -112,6 +117,8 @@ pub struct Auth {
     pub node_id: u128,
     /// The client's token hash, lowercase hex. Keys its acknowledgements.
     pub key: String,
+    /// The client's Ed25519 public key. Checks the signature on each change.
+    public_key: [u8; 32],
     read: Vec<Vec<u8>>,
     write: Vec<Vec<u8>>,
 }
@@ -165,11 +172,14 @@ impl Access {
                 )));
             }
             seen.push(node_id);
+            let public_key = parse_hash(&t.public_key)
+                .map_err(|_| ConfigError("public_key must be 64 hex digits".into()))?;
             let key = t.sha256.to_ascii_lowercase();
             keys.push(key.clone());
             let auth = Auth {
                 node_id,
                 key,
+                public_key,
                 read: t.read.iter().map(|p| p.as_bytes().to_vec()).collect(),
                 write: t.write.iter().map(|p| p.as_bytes().to_vec()).collect(),
             };
@@ -229,6 +239,17 @@ pub fn screen_incoming(delta: Delta, auth: &Auth) -> Result<Delta, RiftError> {
             return Err(RiftError::Protocol(
                 "write outside the permitted key prefixes",
             ));
+        }
+        if !verify_event(
+            &auth.public_key,
+            change.node_id,
+            change.lamport,
+            change.tombstone,
+            &change.key,
+            &change.value,
+            &change.signature,
+        ) {
+            return Err(RiftError::Protocol("event signature does not verify"));
         }
         kept.push(change);
     }

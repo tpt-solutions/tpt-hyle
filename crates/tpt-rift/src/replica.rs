@@ -2,6 +2,8 @@
 
 use tpt_hyle::{Hyle, Storage, HEADER_LEN};
 
+use crate::directory::Directory;
+
 use crate::wire::{Change, Delta};
 use crate::RiftError;
 
@@ -39,12 +41,27 @@ pub struct ImportStats {
 /// A store taking part in replication.
 pub struct Replica<S: Storage> {
     store: Hyle<S>,
+    directory: Option<Directory>,
 }
 
 impl<S: Storage> Replica<S> {
     /// Wraps a store.
     pub fn new(store: Hyle<S>) -> Self {
-        Self { store }
+        Self {
+            store,
+            directory: None,
+        }
+    }
+
+    /// Requires every incoming event to come from a node in `directory`, with a
+    /// valid signature. Checked before anything in the delta is applied.
+    pub fn set_directory(&mut self, directory: Directory) {
+        self.directory = Some(directory);
+    }
+
+    /// This replica's Ed25519 public key. Peers list it to accept its events.
+    pub fn public_key(&self) -> [u8; 32] {
+        self.store.public_key()
     }
 
     /// The underlying store, for local reads and writes.
@@ -113,12 +130,14 @@ impl<S: Storage> Replica<S> {
             let mut key = vec![0u8; ev.key_len as usize];
             let mut value = vec![0u8; ev.payload_len as usize];
             self.store.read_record(&ev, &mut key, &mut value)?;
+            let signature = self.store.event_signature(&ev)?;
             changes.push(Change {
                 key,
                 value,
                 lamport: ev.lamport,
                 node_id: ev.node_id,
                 tombstone: ev.tombstone,
+                signature,
             });
         }
         if exhausted {
@@ -151,6 +170,24 @@ impl<S: Storage> Replica<S> {
         if delta.changes.is_empty() {
             return Ok(stats);
         }
+        if let Some(directory) = &self.directory {
+            for ch in &delta.changes {
+                let key = directory.get(ch.node_id).ok_or(RiftError::Protocol(
+                    "change from a node not in the directory",
+                ))?;
+                if !tpt_hyle::verify_event(
+                    key,
+                    ch.node_id,
+                    ch.lamport,
+                    ch.tombstone,
+                    &ch.key,
+                    &ch.value,
+                    &ch.signature,
+                ) {
+                    return Err(RiftError::Protocol("event signature does not verify"));
+                }
+            }
+        }
         // One batch per delta: it lands whole or not at all. The batch sees
         // its own earlier writes, so two changes to one key compare correctly.
         let mut batch = self.store.batch()?;
@@ -160,7 +197,14 @@ impl<S: Storage> Replica<S> {
                 None => true,
             };
             if wins {
-                batch.put_remote(&ch.key, &ch.value, ch.lamport, ch.node_id, ch.tombstone)?;
+                batch.put_remote(
+                    &ch.key,
+                    &ch.value,
+                    ch.lamport,
+                    ch.node_id,
+                    ch.tombstone,
+                    ch.signature,
+                )?;
                 stats.applied += 1;
             } else {
                 stats.skipped += 1;

@@ -15,13 +15,14 @@ repository.workspace = true
 default = ["std"]
 # The store needs a heap for encryption and batches. The bare no_std build
 # keeps the storage trait, the record formats, and the error type only.
-alloc = ["dep:chacha20poly1305", "dep:sha2"]
+alloc = ["dep:chacha20poly1305", "dep:sha2", "dep:ed25519-dalek"]
 std = ["alloc", "dep:argon2", "dep:getrandom"]
 json = ["alloc", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"], optional = true }
 sha2 = { version = "0.10", default-features = false, optional = true }
+ed25519-dalek = { version = "2", default-features = false, optional = true }
 argon2 = { version = "0.5", default-features = false, features = ["alloc"], optional = true }
 getrandom = { version = "0.2", optional = true }
 serde = { version = "1.0", default-features = false, features = ["alloc"], optional = true }

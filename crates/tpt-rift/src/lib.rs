@@ -9,6 +9,7 @@
 //! Transports implement [`Transport`]. [`mock::MockTransport`] is an
 //! in-process one for tests.
 
+mod directory;
 mod doc;
 mod error;
 mod mock;
@@ -17,6 +18,7 @@ mod sync;
 mod transport;
 mod wire;
 
+pub use directory::Directory;
 pub use doc::{delete_doc, get_doc, put_doc};
 pub use error::RiftError;
 pub use mock::MockTransport;

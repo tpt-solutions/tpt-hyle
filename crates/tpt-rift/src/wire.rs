@@ -8,11 +8,13 @@ use crate::RiftError;
 /// Magic bytes at the start of every delta.
 pub const MAGIC: [u8; 4] = *b"RIFT";
 /// Version of this encoding.
-pub const WIRE_VERSION: u8 = 2;
+pub const WIRE_VERSION: u8 = 3;
 
 /// Fixed part of one change: lamport(8) node_id(16) flags(1) key_len(2)
-/// value_len(4).
+/// value_len(4). The signature follows the value.
 const CHANGE_HEADER_LEN: usize = 31;
+/// Length of the Ed25519 signature that ends every change.
+const SIGNATURE_LEN: usize = 64;
 /// Fixed part of a delta: magic(4) version(1) generation(4) count(4)
 /// control(1). Control fields follow, as the control bits say.
 const DELTA_HEADER_LEN: usize = 14;
@@ -39,6 +41,9 @@ pub struct Change {
     pub node_id: u128,
     /// `true` if this change deletes the key.
     pub tombstone: bool,
+    /// Ed25519 signature by `node_id` over the event. Peers check it with the
+    /// directory. See `tpt_hyle::event_message`.
+    pub signature: [u8; 64],
 }
 
 /// A client's acknowledgement that it is caught up with the hub.
@@ -78,7 +83,7 @@ impl Delta {
                 + self
                     .changes
                     .iter()
-                    .map(|c| CHANGE_HEADER_LEN + c.key.len() + c.value.len())
+                    .map(|c| CHANGE_HEADER_LEN + c.key.len() + c.value.len() + SIGNATURE_LEN)
                     .sum::<usize>(),
         );
         out.extend_from_slice(&MAGIC);
@@ -108,6 +113,7 @@ impl Delta {
             out.extend_from_slice(&(c.value.len() as u32).to_le_bytes());
             out.extend_from_slice(&c.key);
             out.extend_from_slice(&c.value);
+            out.extend_from_slice(&c.signature);
         }
         out
     }
@@ -146,7 +152,8 @@ impl Delta {
         }
         // Each change takes at least its header, so a count that cannot fit
         // in the remaining bytes is hostile. Reject it before allocating.
-        if (count as usize).saturating_mul(CHANGE_HEADER_LEN) > bytes.len() - r.pos {
+        if (count as usize).saturating_mul(CHANGE_HEADER_LEN + SIGNATURE_LEN) > bytes.len() - r.pos
+        {
             return Err(RiftError::Protocol("change count exceeds message length"));
         }
 
@@ -169,12 +176,15 @@ impl Delta {
             }
             let key = r.take(key_len)?.to_vec();
             let value = r.take(value_len)?.to_vec();
+            let mut signature = [0u8; SIGNATURE_LEN];
+            signature.copy_from_slice(r.take(SIGNATURE_LEN)?);
             changes.push(Change {
                 key,
                 value,
                 lamport,
                 node_id,
                 tombstone,
+                signature,
             });
         }
         if r.pos != bytes.len() {
@@ -250,6 +260,7 @@ mod tests {
                     lamport: 10,
                     node_id: 1,
                     tombstone: false,
+                    signature: [1; 64],
                 },
                 Change {
                     key: b"user:2".to_vec(),
@@ -257,6 +268,7 @@ mod tests {
                     lamport: 11,
                     node_id: 2,
                     tombstone: true,
+                    signature: [2; 64],
                 },
             ],
             caught_up: None,

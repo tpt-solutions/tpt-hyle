@@ -1,4 +1,4 @@
-//! On-disk layout, version 3. The authoritative description is
+//! On-disk layout, version 4. The authoritative description is
 //! `docs/format.md`. Keep the two in sync.
 //!
 //! A store is one file: a 128-byte header, then frames. Every frame is sealed
@@ -11,7 +11,7 @@
 use core::fmt;
 
 /// Version written into every header.
-pub const FORMAT_VERSION: u16 = 3;
+pub const FORMAT_VERSION: u16 = 4;
 /// Magic bytes at the start of every store file.
 pub const MAGIC: [u8; 4] = *b"HYLG";
 /// Length of the header. Frames start here.
@@ -35,6 +35,8 @@ pub const KIND_COMMIT: u8 = 2;
 /// Fixed part of a data payload: lamport(8), node(16), flags(1), key_len(2),
 /// value_len(4).
 pub const DATA_FIXED_LEN: usize = 31;
+/// Length of the Ed25519 signature that ends every data plaintext.
+pub const EVENT_SIG_LEN: usize = 64;
 /// Flag bit in a data payload marking a deletion.
 pub const FLAG_TOMBSTONE: u8 = 0b0000_0001;
 /// Commit payload: lamport(8), node(16), count(4), digest(32).
@@ -210,14 +212,17 @@ pub struct DataPayload<'a> {
     pub key: &'a [u8],
     /// Value bytes.
     pub value: &'a [u8],
+    /// Ed25519 signature by the issuing node over [`event_message`].
+    pub signature: [u8; EVENT_SIG_LEN],
 }
 
 #[cfg(feature = "alloc")]
 impl DataPayload<'_> {
     /// Serializes the payload.
     pub fn encode(&self) -> alloc::vec::Vec<u8> {
-        let mut out =
-            alloc::vec::Vec::with_capacity(DATA_FIXED_LEN + self.key.len() + self.value.len());
+        let mut out = alloc::vec::Vec::with_capacity(
+            DATA_FIXED_LEN + self.key.len() + self.value.len() + EVENT_SIG_LEN,
+        );
         out.extend_from_slice(&self.lamport.to_le_bytes());
         out.extend_from_slice(&self.node_id.to_le_bytes());
         out.push(if self.tombstone { FLAG_TOMBSTONE } else { 0 });
@@ -225,6 +230,7 @@ impl DataPayload<'_> {
         out.extend_from_slice(&(self.value.len() as u32).to_le_bytes());
         out.extend_from_slice(self.key);
         out.extend_from_slice(self.value);
+        out.extend_from_slice(&self.signature);
         out
     }
 }
@@ -255,7 +261,7 @@ pub fn decode_data(plain: &[u8]) -> Option<DataFields> {
     }
     let key_len = le_u16(&plain[25..27]);
     let value_len = le_u32(&plain[27..31]);
-    if plain.len() != DATA_FIXED_LEN + key_len as usize + value_len as usize {
+    if plain.len() != DATA_FIXED_LEN + key_len as usize + value_len as usize + EVENT_SIG_LEN {
         return None;
     }
     if key_len == 0 {
@@ -268,6 +274,57 @@ pub fn decode_data(plain: &[u8]) -> Option<DataFields> {
         key_len,
         value_len,
     })
+}
+
+/// Domain separator for event signatures, so one key cannot be used to sign a
+/// different kind of message.
+pub const EVENT_DOMAIN: &[u8] = b"tpt-hyle event v1";
+
+/// The bytes an event's signature covers. Every field is fixed-width or
+/// length-prefixed, so two different events never produce the same bytes.
+#[cfg(feature = "alloc")]
+pub fn event_message(
+    node_id: u128,
+    lamport: u64,
+    tombstone: bool,
+    key: &[u8],
+    value: &[u8],
+) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec::Vec::with_capacity(
+        EVENT_DOMAIN.len() + 16 + 8 + 1 + 2 + key.len() + 4 + value.len(),
+    );
+    out.extend_from_slice(EVENT_DOMAIN);
+    out.extend_from_slice(&node_id.to_le_bytes());
+    out.extend_from_slice(&lamport.to_le_bytes());
+    out.push(u8::from(tombstone));
+    out.extend_from_slice(&(key.len() as u16).to_le_bytes());
+    out.extend_from_slice(key);
+    out.extend_from_slice(&(value.len() as u32).to_le_bytes());
+    out.extend_from_slice(value);
+    out
+}
+
+/// Checks an event signature against a node's Ed25519 public key. Uses the
+/// strict rules: a non-canonical signature or a weak key is refused.
+#[cfg(feature = "alloc")]
+#[allow(clippy::too_many_arguments)]
+pub fn verify_event(
+    public_key: &[u8; 32],
+    node_id: u128,
+    lamport: u64,
+    tombstone: bool,
+    key: &[u8],
+    value: &[u8],
+    signature: &[u8; EVENT_SIG_LEN],
+) -> bool {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    let Ok(verifying) = VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+    let message = event_message(node_id, lamport, tombstone, key, value);
+    verifying
+        .verify_strict(&message, &Signature::from_bytes(signature))
+        .is_ok()
 }
 
 /// The plaintext of a commit frame.

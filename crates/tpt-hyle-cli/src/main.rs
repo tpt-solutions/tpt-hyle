@@ -51,6 +51,12 @@ enum Command {
         /// Store file path.
         path: PathBuf,
     },
+    /// Print the store's Ed25519 public key. List it in the server config
+    /// under the client's token, so the hub accepts this node's events.
+    PublicKey {
+        /// Store file path.
+        path: PathBuf,
+    },
     /// Drop superseded values. Starts a new generation, so peer cursors from
     /// the old generation become stale.
     Compact {
@@ -73,6 +79,7 @@ fn main() -> ExitCode {
         Command::Inspect { path } => inspect(&path),
         Command::DumpSyncLog { path, json } => dump(&path, json),
         Command::Verify { path } => verify(&path),
+        Command::PublicKey { path } => public_key(&path),
         Command::Compact { path } => compact(&path),
     };
     match result {
@@ -125,6 +132,7 @@ fn inspect(path: &Path) -> CliResult {
     let tombstones = entries.iter().filter(|e| e.event.tombstone).count();
 
     println!("node id:     {:#034x}", store.node_id());
+    println!("public key:  {}", hex(&store.public_key()));
     println!("generation:  {}", store.generation());
     println!("lamport:     {}", store.lamport());
     println!("writes:      {}", entries.len());
@@ -171,6 +179,16 @@ fn verify(path: &Path) -> CliResult {
     let entries = read_all(&mut store)?;
     println!("ok: {} writes verified", entries.len());
     Ok(())
+}
+
+fn public_key(path: &Path) -> CliResult {
+    let store = open(path)?;
+    println!("{}", hex(&store.public_key()));
+    Ok(())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn compact(path: &Path) -> CliResult {

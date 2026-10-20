@@ -66,7 +66,7 @@ async fn main() -> ExitCode {
             None => Err("usage: tpt-rift-server hash-token <token>".into()),
         },
         _ => Err(
-            "usage: tpt-rift-server serve <config.json> | new-token | hash-token <token>".into(),
+            "usage: tpt-rift-server serve <config.json> | collect <config.json> | new-token | hash-token <token>".into(),
         ),
     };
     match result {

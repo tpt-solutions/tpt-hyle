@@ -104,9 +104,15 @@ fn rand_suffix() -> u64 {
 }
 
 fn entry(token: &str, node: u128, read: &[&str], write: &[&str]) -> TokenConfig {
+    let public_key = mem_hyle(node)
+        .public_key()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     TokenConfig {
         sha256: hash_token(token),
         node_id: node.to_string(),
+        public_key,
         read: read.iter().map(|s| s.to_string()).collect(),
         write: write.iter().map(|s| s.to_string()).collect(),
     }
@@ -212,6 +218,7 @@ async fn a_write_outside_permitted_prefixes_closes_the_link() {
                 lamport: 1,
                 node_id: 13,
                 tombstone: false,
+                signature: [0; 64],
             }],
             ..Default::default()
         })
@@ -253,6 +260,7 @@ async fn a_spoofed_node_id_is_skipped_not_applied() {
                 lamport: 99,
                 node_id: 10,
                 tombstone: false,
+                signature: [0; 64],
             }],
             ..Default::default()
         })
@@ -287,6 +295,7 @@ async fn an_oversized_message_closes_the_link() {
                 lamport: 1,
                 node_id: 10,
                 tombstone: false,
+                signature: [0; 64],
             }],
             ..Default::default()
         })
@@ -598,18 +607,17 @@ async fn after_collection_a_replayed_old_write_is_refused_and_a_new_one_is_kept(
     rounds(&mut a, &mut b, 30).await;
 
     // A write from before the collection, with lamport 1, is replayed. The
-    // hub must refuse it, because every client has already acked past it.
+    // event is genuine: node 10 signed it when it wrote it, so only the floor
+    // can refuse it. The hub must refuse it, because every client has already
+    // acked past it.
+    let mut old = Replica::new(mem_hyle(10));
+    old.store().put(b"j", b"old").unwrap();
+    let replay = old.export(11, old.start_cursor(), 16).unwrap().delta;
+    assert_eq!(replay.changes.len(), 1);
     a.transport
         .send(Delta {
             generation: 1,
-            changes: vec![Change {
-                key: b"j".to_vec(),
-                value: b"old".to_vec(),
-                lamport: 1,
-                node_id: 10,
-                tombstone: false,
-            }],
-            ..Default::default()
+            ..replay
         })
         .await
         .unwrap();
@@ -620,4 +628,37 @@ async fn after_collection_a_replayed_old_write_is_refused_and_a_new_one_is_kept(
     assert!(!b.has(b"j"), "the replayed write was refused");
     assert_eq!(a.value(b"fresh").as_deref(), Some(&b"new"[..]));
     server.abort();
+}
+
+#[tokio::test]
+async fn a_forged_signature_closes_the_link() {
+    let addr = start_hub(vec![entry("ta", 10, &[""], &[""])]).await;
+    let client = client(addr, "ta", 10).await;
+    client
+        .transport
+        .send(Delta {
+            generation: 0,
+            changes: vec![Change {
+                key: b"k".to_vec(),
+                value: b"forged".to_vec(),
+                lamport: 1,
+                node_id: 10,
+                tombstone: false,
+                signature: [7; 64],
+            }],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let closed = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match client.transport.receive().await {
+                Err(_) => return true,
+                Ok(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await
+    .expect("the hub should close a link that sent a forged event");
+    assert!(closed);
 }

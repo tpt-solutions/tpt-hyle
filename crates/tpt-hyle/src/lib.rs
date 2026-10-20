@@ -50,8 +50,10 @@ mod store;
 
 pub use error::Error;
 #[cfg(feature = "alloc")]
+pub use format::{event_message, verify_event};
 #[cfg(feature = "alloc")]
-pub use format::{ChangeEvent, FORMAT_VERSION, HEADER_LEN, MAX_KEY_LEN};
+#[cfg(feature = "alloc")]
+pub use format::{ChangeEvent, EVENT_SIG_LEN, FORMAT_VERSION, HEADER_LEN, MAX_KEY_LEN};
 pub use storage::{FixedStorage, Storage};
 
 #[cfg(feature = "alloc")]

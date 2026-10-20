@@ -1,4 +1,4 @@
-# Wire format: deltas (version 2)
+# Wire format: deltas (version 3)
 
 A **delta** is what one replica sends another. It carries the changes that
 peer has not yet seen, with their keys and values, and, optionally, the two
@@ -20,7 +20,7 @@ built on it is in [ADR 0014](adr/0014-tombstone-collection.md).
 | Offset | Size | Field        | Notes                                        |
 |--------|------|--------------|----------------------------------------------|
 | 0      | 4    | magic        | `RIFT`                                       |
-| 4      | 1    | version      | `2`                                          |
+| 4      | 1    | version      | `3`                                          |
 | 5      | 4    | generation   | Generation of the sender's log at export     |
 | 9      | 4    | count        | Number of changes. At most `1 << 20`         |
 | 13     | 1    | control      | Bit 0: `caught_up` present. Bit 1: `ack` present. Other bits must be `0` |
@@ -39,6 +39,18 @@ Each change:
 | 4         | value_len  | Must be `0` for a tombstone                        |
 | key_len   | key        |                                                    |
 | value_len | value      |                                                    |
+| 64        | signature  | Ed25519 signature by `node_id` over the event      |
+
+## Signatures
+
+Each change carries its origin's Ed25519 signature. A receiver with a
+directory of node keys checks every change in a delta before applying any of
+them. A change from an unlisted node, or with a bad signature, refuses the whole
+delta. The signed message is defined in [docs/format.md](format.md#signatures).
+A relay forwards a change with its origin's signature, unchanged.
+
+A receiver without a directory does not check signatures. It applies changes as
+before.
 
 ## Control fields
 
@@ -77,5 +89,5 @@ is what they refer to, and a receiver ignores them if it is in another one.
 ## Versioning
 
 Any change to the bytes above bumps `WIRE_VERSION`. Receivers reject versions
-they do not know. Version 1 is not accepted by version 2 code, and there is no
+they do not know. Versions 1 and 2 are not accepted by version 3 code, and there is no
 negotiation. Peers must be upgraded together.

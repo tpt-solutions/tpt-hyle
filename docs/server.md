@@ -15,9 +15,16 @@ access rules in [ADR 0006](adr/0006-server-auth-and-access.md).
 
    This prints a token and its SHA-256 hash. Give the token to the client and
    keep it out of logs. Put the hash in the config.
-3. Write a config file (see the example below) and start the server:
+3. Get each client's public key. The client runs this on its own store:
 
-       tpt-rift-server serve server.json
+       tpt-hyle-cli public-key client.db
+
+   Put the 64 hex digits it prints in the config as `public_key`. The hub
+   refuses any change from that client that is not signed by the key.
+4. Write a config file (see the example below) and start the server. The store
+   passphrase is read from `TPT_HUB_PASSPHRASE`, never from the config:
+
+       TPT_HUB_PASSPHRASE=... tpt-rift-server serve server.json
 
 ## Example config
 
@@ -33,12 +40,14 @@ access rules in [ADR 0006](adr/0006-server-auth-and-access.md).
     {
       "sha256": "<hash from new-token>",
       "node_id": "10",
+      "public_key": "<64 hex digits from tpt-hyle-cli public-key>",
       "read": ["notes/", "users/"],
       "write": ["notes/", "users/"]
     },
     {
       "sha256": "<hash from new-token>",
       "node_id": "11",
+      "public_key": "<64 hex digits from tpt-hyle-cli public-key>",
       "read": ["public/"],
       "write": []
     }
@@ -46,8 +55,8 @@ access rules in [ADR 0006](adr/0006-server-auth-and-access.md).
 }
 ```
 
-- `store` is a base path. The hub creates `<store>.sync` and
-  `<store>.state.<n>` beside it.
+- `store` is the hub's store file. The hub also keeps `<store>.acks`, the
+  clients' acknowledgements, beside it. Back up both.
 - `listen` should be a loopback address when a reverse proxy sits in front of
   the server.
 - Each `read` and `write` entry is a key prefix. An empty list grants nothing.
@@ -66,9 +75,10 @@ you do not fully control:
 
 - **Authentication.** A bad or missing token is refused with `401`, before any
   data flows.
-- **Writes.** A change is accepted only when its node id is the token's node
-  id. Changes from other nodes are skipped. A write outside the token's write
-  prefixes closes the connection.
+- **Writes.** A change is accepted only when its node id is the token's
+  node id. Changes from other nodes are skipped. A write outside the token's
+  write prefixes closes the connection. A change whose signature does not verify
+  under the token's `public_key` also closes the connection.
 - **Reads.** A client receives only keys matching its read prefixes.
 - **Size.** A message larger than `max_message_bytes` is refused.
 - **Rate.** Each connection has a token bucket of `messages_per_second`. A

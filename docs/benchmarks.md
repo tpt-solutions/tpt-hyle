@@ -7,39 +7,60 @@ so the SQLite C library it builds stays out of the core crate.
 
 Each write is 100 bytes. Durable runs fsync. Each figure is one run on the
 development machine (Windows 11, NVMe storage). Run-to-run variance is real, so
-ranges are given where the runs disagree.
+treat these as one sample, not a guarantee.
+
+These numbers are for format version 4, which signs every event with Ed25519.
 
 ## Results
 
 | Workload | tpt-hyle | SQLite | Ratio |
 |---|---|---|---|
-| In-memory, one write per commit | 1.29 M writes/s | 0.31 M writes/s | 4.1x faster |
-| File, one durable commit per write | 156 writes/s | 468 writes/s | 0.33x |
-| File, batches of 100 | 15.7 k writes/s | 28 to 43 k writes/s | 0.37 to 0.56x |
+| In-memory, one write per commit | 24.2 k writes/s | 285 k writes/s | 0.085x |
+| File, one durable commit per write | 461 writes/s | 450 writes/s | 1.03x |
+| File, batches of 100 | 17.2 k writes/s | 38.7 k writes/s | 0.44x |
 
-Reads, with the key index (ADR 0008):
+Reads, through the key index (ADR 0008):
 
 | Keys in log | `get` cost |
 |---|---|
-| 1,000 | 0.6 µs |
-| 10,000 | 0.8 µs |
-| 50,000 | 1.2 µs |
+| 1,000 | 4.1 µs |
+| 10,000 | 5.0 µs |
+| 50,000 | 5.9 µs |
 
-Before the index, the same reads took 86 µs, 868 µs and 4.4 ms.
+## What changed, and why it matters
+
+Format version 3 wrote encrypted frames with no signatures. An earlier run on
+the same machine measured it at about 275 k in-memory writes per second. Version
+4 adds one Ed25519 signature to every write. That costs about 35 µs per write,
+which is most of the in-memory time. The durable one-commit-per-write path is
+unchanged, because it is bound by fsync and the signature hides inside that
+wait. The batched path also pays the signature on every write.
+
+So the in-memory engine is now roughly 11 times slower than before signing, and
+it is 12 times slower than SQLite in memory. This is the price of per-event
+signatures. The signature is what lets a relay forward an event, and lets a
+peer check it, without trusting the relay. See [ADR 0015](adr/0015-signed-events.md).
+
+Signature verification costs more, because the receiver checks each change it
+imports. The bench does not measure that path yet.
 
 ## What the numbers mean
 
-- **Durable writes are bound by fsync.** A commit makes three durable flushes:
-  state, data, and the commit record. SQLite's WAL makes one. That accounts
-  for most of the file-backed gap.
-- **Batching amortizes the cost** but does not close it. Within a batch, both
-  engines pay one commit, and our commit still costs three flushes.
-- **Closing the gap needs a format change.** One file with one flush per
-  commit would match SQLite's commit cost. Two files with checksummed commits
-  would cut it to two. Neither is built. See ADR 0002 and ADR 0005.
-- **The 10x target was not reached**, and for durable per-commit workloads
-  it is not reachable with this design. The in-memory path is faster, and the
-  read path is much faster than before the index.
+- **Durable writes are bound by fsync.** A commit makes one durable flush
+  (`sync_data` on the single file), which matches SQLite WAL's one.
+- **Batching amortizes the commit flush,** but with signing, the per-write cost
+  dominates a batch. A batch of 100 is about 0.44x SQLite here.
+- **Reads are a few microseconds,** and grow slowly with the log, because the
+  key index covers the lookup.
+- **In-memory writes are now signature-bound.** A future change could reduce
+  this by signing a batch rather than each event, but relayed events need their
+  origin's signature, so that would need a different scheme.
+
+## Not measured
+
+- Import and verification throughput on a receiver.
+- The sync path end to end.
+- Encrypted-read cost against the unencrypted layout of earlier versions.
 
 ## Reproducing
 

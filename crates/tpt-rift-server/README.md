@@ -9,7 +9,8 @@ authenticated WebSocket connections, and passes changes between clients.
 
 ```sh
 tpt-rift-server new-token
-tpt-rift-server serve server.json
+TPT_HUB_PASSPHRASE=... tpt-rift-server serve server.json
+TPT_HUB_PASSPHRASE=... tpt-rift-server collect server.json   # server stopped
 ```
 
 Operator guide, example config, and the TLS requirement: [docs/server.md](../../docs/server.md).

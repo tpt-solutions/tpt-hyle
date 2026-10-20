@@ -40,3 +40,11 @@ tpt-rift-transport-ws = { path = "crates/tpt-rift-transport-ws", version = "0.1.
 tpt-rift-transport-webrtc = { path = "crates/tpt-rift-transport-webrtc", version = "0.1.0" }
 tpt-hyle-test-utils = { path = "crates/tpt-hyle-test-utils", version = "0.1.0" }
 tpt-hyle-rift = { path = "crates/tpt-hyle-rift", version = "0.1.0" }
+
+# Curve arithmetic is far too slow unoptimized, and the signature tests run it
+# many times. Optimize only those crates in the dev profile.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.dev.package.ed25519-dalek]
+opt-level = 3

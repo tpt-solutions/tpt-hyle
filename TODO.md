@@ -53,7 +53,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] Corruption tests: truncated/flipped-bit files never panic (exhaustive single-bit sweep, truncation property, fuzz target)
 - [x] Property tests against a reference model, including torn-tail recovery
 - [x] Stress tests: 10,000-op random histories with reopens and compactions, file-backed variant, feed replay checked against state
-- [ ] Benchmarks vs SQLite (KV write workload); target 10x. Results and method: [docs/benchmarks.md](docs/benchmarks.md). Harness: `bench/` (outside the workspace). Measured on 20k writes: in-memory tpt-hyle 4.9x faster. File, one durable commit per write: 0.34x. File, batches of 100: 0.36x (15.5k vs 42.7k writes/s). The remaining gap is three durable flushes per commit against SQLite WAL's one. Closing it needs a single-file layout or a different durability barrier, which is a format decision still open.
+- [ ] Benchmarks vs SQLite: the 10x target was not reached. Current numbers and method are in [docs/benchmarks.md](docs/benchmarks.md). In memory, tpt-hyle is 0.085x SQLite, because each write is signed. Durable one-commit-per-write is 1.03x. Batches of 100 are 0.44x. Harness: `bench/` (outside the workspace)
 - [x] CI builds core on `thumbv7em-none-eabihf` and `wasm32-unknown-unknown` (wasm steps added to CI)
 
 ## Phase 2: tpt-rift + unified API (Year 2)
@@ -102,7 +102,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 
 ## Open questions
 
-- [ ] Security model: encryption at rest done (format v3, [ADR 0013](docs/adr/0013-encryption-and-single-file.md)). Signed events open: a token holder can still write as its node and lie in its acks (spec is silent; CRC-32C detects corruption, not tampering. See [SECURITY.md](SECURITY.md))
+- [x] Security model: encryption at rest (format v3, [ADR 0013](docs/adr/0013-encryption-and-single-file.md)) and signed events (format v4, [ADR 0015](docs/adr/0015-signed-events.md)). Still open: a passphrase holder can sign as its node, and acks are unsigned, so a lying client can defeat tombstone collection ([ADR 0014](docs/adr/0014-tombstone-collection.md))
 - [ ] Schema/versioning and migration story
 - [ ] Is "100% formal verification" realistic with serde in the path? Scope proofs to the no_alloc core.
 - [ ] Spec's `LWW-ES` vs JSON CRDT selection: per-key type tag or per-namespace?
