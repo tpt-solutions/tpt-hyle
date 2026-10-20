@@ -140,3 +140,52 @@ pub async fn accept(listener: &TcpListener) -> Result<WebSocketTransport<TcpStre
         .map_err(transport_err)?;
     Ok(WebSocketTransport::new(ws))
 }
+
+/// Accepts a connection with a handshake callback and a message-size cap.
+///
+/// The callback sees the HTTP request, so it can check headers such as
+/// `Authorization`. Returning an error rejects the upgrade, and the error
+/// response is sent to the client.
+pub async fn accept_with<S, F>(
+    stream: S,
+    max_message_bytes: usize,
+    callback: F,
+) -> Result<WebSocketTransport<S>, RiftError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Unpin
+        + FnOnce(
+            &tokio_tungstenite::tungstenite::handshake::server::Request,
+            tokio_tungstenite::tungstenite::handshake::server::Response,
+        ) -> Result<
+            tokio_tungstenite::tungstenite::handshake::server::Response,
+            tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+        >,
+{
+    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+        max_message_size: Some(max_message_bytes),
+        ..Default::default()
+    };
+    let ws = tokio_tungstenite::accept_hdr_async_with_config(stream, callback, Some(config))
+        .await
+        .map_err(transport_err)?;
+    Ok(WebSocketTransport::new(ws))
+}
+
+/// Opens a client connection that presents `token` as a bearer credential
+/// in the `Authorization` header.
+pub async fn connect_authorized(
+    url: &str,
+    token: &str,
+) -> Result<WebSocketTransport<MaybeTlsStream<TcpStream>>, RiftError> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+
+    let mut request = url.into_client_request().map_err(transport_err)?;
+    let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(transport_err)?;
+    request.headers_mut().insert("authorization", value);
+    let (ws, _response) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(transport_err)?;
+    Ok(WebSocketTransport::new(ws))
+}

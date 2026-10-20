@@ -21,6 +21,8 @@ pub enum RiftError {
     Transport(String),
     /// A received message is malformed or breaks the wire rules.
     Protocol(&'static str),
+    /// A document could not be encoded or decoded as JSON.
+    Json(String),
 }
 
 impl fmt::Display for RiftError {
@@ -33,6 +35,7 @@ impl fmt::Display for RiftError {
             ),
             RiftError::Transport(msg) => write!(f, "transport error: {msg}"),
             RiftError::Protocol(what) => write!(f, "protocol error: {what}"),
+            RiftError::Json(msg) => write!(f, "JSON error: {msg}"),
         }
     }
 }

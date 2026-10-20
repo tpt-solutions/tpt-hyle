@@ -64,21 +64,22 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] Apply remote events into tpt-hyle without echoing them back (origin tracking; forwarding through a middle node still works)
 - [x] Per-peer sync cursors `(generation, offset)`, advanced only after delivery
 - [x] Background sync loop: timer-driven `run_until` with backoff. Connectivity-triggered rounds are not done
-- [ ] Basic JSON CRDT (field-level LWW)
+- [x] Basic JSON CRDT: field-level LWW, one store key per leaf ([ADR 0007](docs/adr/0007-json-document-crdt.md)). Arrays are whole-value leaves; element-level merge is not built
 - [x] Mock transport and two-instance offline-write convergence test
-- [x] `tpt-hyle-rift`: `open()`, `connect()`, `resume()` (with automatic recovery from a stale generation). Background loop still open
+- [x] `tpt-hyle-rift`: `open()`, `connect()`, `resume()` (with automatic recovery from a stale generation). Timer-driven `run_until` added; connectivity triggers still open
 - [x] Property test: convergence under reordering and duplication (mutation-checked)
 - [x] Examples in `crates/tpt-hyle-rift/examples/` (`two_replicas`)
 
 ## Phase 3: Client-server (Year 3)
 
 - [x] `tpt-rift-transport-ws` client + server halves (no auth or TLS yet; see the Phase 3 auth item)
-- [ ] `tpt-rift-server` (axum, WebSocket endpoint, tpt-hyle storage)
-- [ ] Authentication (decide: token / JWT / mTLS)
-- [ ] Access control (per-namespace/key-prefix rules)
-- [ ] Multi-client fan-out
-- [ ] TLS guidance, rate limiting, size limits
-- [ ] Docker image + deploy docs
+- [x] `tpt-rift-server`: WebSocket hub with fan-out, per-connection cursors, and size limits ([docs/server.md](docs/server.md))
+- [x] Authentication: bearer tokens stored as SHA-256 hashes, each bound to one node id. JWT and mTLS deferred ([ADR 0006](docs/adr/0006-server-auth-and-access.md))
+- [x] Access control: per-token key-prefix read and write lists
+- [x] Multi-client fan-out (polling hub; each connection keeps its own cursor)
+- [x] Message size limit. Rate limiting is not built
+- [ ] TLS: deliberately not in the server. Expected from a reverse proxy, documented in docs/server.md
+- [ ] Docker image and deploy docs (not attempted)
 - [ ] End-to-end demo app syncing to self-hosted server
 
 ## Phase 4: P2P + edge (Year 4)

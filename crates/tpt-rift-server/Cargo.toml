@@ -3,7 +3,7 @@ name = "tpt-rift-server"
 description = "Self-hostable reference sync server for tpt-rift"
 readme = "README.md"
 keywords = ["sync-server", "websocket", "offline-first", "self-hosted", "tpt-rift"]
-categories = ["web-programming::http-server"]
+categories = ["web-programming::websocket", "network-programming"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,5 +14,10 @@ repository.workspace = true
 [dependencies]
 tpt-hyle = { workspace = true, features = ["std"] }
 tpt-rift = { workspace = true }
+tpt-rift-transport-ws = { workspace = true }
 tokio = { workspace = true }
-axum = "0.7"
+tokio-tungstenite = "0.24"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+rand = "0.8"

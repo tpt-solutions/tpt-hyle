@@ -1,8 +1,22 @@
 # tpt-rift-server
 
-Self-hostable reference sync server for `tpt-rift`. Not implemented yet: Phase 3.
+Reference sync server for tpt-rift. It is a hub: it stores data, accepts
+authenticated WebSocket connections, and passes changes between clients.
 
-Part of [tpt-hyle](../../README.md). Status: pre-alpha. Work is tracked in [TODO.md](../../TODO.md) and the design is in [spec.txt](../../spec.txt) (RFC 003).
+- Bearer tokens, stored only as SHA-256 hashes. Each token is bound to one node id.
+- Key-prefix read and write permissions per token.
+- Message size limit. Changes are checked against the token's rules before they are applied.
+
+```sh
+tpt-rift-server new-token
+tpt-rift-server serve server.json
+```
+
+Operator guide, example config, and the TLS requirement: [docs/server.md](../../docs/server.md).
+Design: [ADR 0006](../../docs/adr/0006-server-auth-and-access.md).
+
+**Not built yet:** rate limiting, hot config reload, a container image.
+TLS is expected from a reverse proxy.
 
 ## License
 

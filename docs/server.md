@@ -1,0 +1,83 @@
+# Running tpt-rift-server
+
+`tpt-rift-server` is a hub. It stores data, accepts authenticated WebSocket
+connections from clients, and passes changes between them. A client writes to
+the hub, and the hub forwards the writes to other clients, subject to the
+access rules in [ADR 0006](adr/0006-server-auth-and-access.md).
+
+## Setup
+
+1. Choose a node id for the hub, and a distinct node id for each client. Node
+   ids are decimal `u128` values. Never reuse one.
+2. Create a token for each client:
+
+       tpt-rift-server new-token
+
+   This prints a token and its SHA-256 hash. Give the token to the client and
+   keep it out of logs. Put the hash in the config.
+3. Write a config file (see the example below) and start the server:
+
+       tpt-rift-server serve server.json
+
+## Example config
+
+```json
+{
+  "store": "/var/lib/tpt-rift/hub",
+  "listen": "127.0.0.1:8080",
+  "node_id": "1",
+  "max_message_bytes": 1048576,
+  "poll_ms": 25,
+  "tokens": [
+    {
+      "sha256": "<hash from new-token>",
+      "node_id": "10",
+      "read": ["notes/", "users/"],
+      "write": ["notes/", "users/"]
+    },
+    {
+      "sha256": "<hash from new-token>",
+      "node_id": "11",
+      "read": ["public/"],
+      "write": []
+    }
+  ]
+}
+```
+
+- `store` is a base path. The hub creates `<store>.sync` and
+  `<store>.state.<n>` beside it.
+- `listen` should be a loopback address when a reverse proxy sits in front of
+  the server.
+- Each `read` and `write` entry is a key prefix. An empty list grants nothing.
+
+## TLS: required when exposed
+
+The server speaks plain `ws://`. A bearer token sent over an unencrypted link
+can be read by anyone on the path. So when clients connect across a network
+you do not fully control:
+
+- Terminate TLS in a reverse proxy in front of the server.
+- Have the proxy forward the `Authorization` header. It must not strip it.
+- Keep the server bound to loopback, so only the proxy can reach it.
+
+## Behaviour
+
+- **Authentication.** A bad or missing token is refused with `401`, before any
+  data flows.
+- **Writes.** A change is accepted only when its node id is the token's node
+  id. Changes from other nodes are skipped. A write outside the token's write
+  prefixes closes the connection.
+- **Reads.** A client receives only keys matching its read prefixes.
+- **Size.** A message larger than `max_message_bytes` is refused.
+- **Fan-out.** Each connection polls the hub every `poll_ms` for changes it
+  has not sent yet. Clients converge without any extra coordination.
+
+## Not yet built
+
+- Rate limiting. A client can send as many changes as its connection allows.
+- Per-token revocation. Remove the entry from the config and restart.
+- Hot reload of the config. A restart is required.
+- A container image. It is not attempted here.
+- Compaction on a running hub. Stop the server, compact the store offline with
+  the CLI, then start it again.

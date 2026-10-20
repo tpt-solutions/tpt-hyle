@@ -9,6 +9,7 @@
 //! Transports implement [`Transport`]. [`mock::MockTransport`] is an
 //! in-process one for tests.
 
+mod doc;
 mod error;
 mod mock;
 mod replica;
@@ -16,6 +17,7 @@ mod sync;
 mod transport;
 mod wire;
 
+pub use doc::{delete_doc, get_doc, put_doc};
 pub use error::RiftError;
 pub use mock::MockTransport;
 pub use replica::{Export, ImportStats, PeerCursor, Replica};
