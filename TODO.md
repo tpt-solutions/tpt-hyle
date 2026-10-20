@@ -94,8 +94,8 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 ## Phase 5: Mobile + ecosystem (Year 5)
 
 - [ ] 100% Kani coverage of core parser; publish proofs (5 harnesses so far, on the parsers that take untrusted bytes)
-- [ ] Swift (iOS) SDK via UniFFI or C ABI
-- [ ] Kotlin (Android) SDK
+- [x] Swift (iOS) and Kotlin (Android) SDKs via UniFFI: `tpt-rift-uniffi`, Rust surface tested, bindings generated. Not compiled for either platform (no Xcode, no Android SDK here)
+
 - [ ] Nested JSON CRDT (concurrent edits in same object)
 - [ ] Integrations: tpt-aion, tpt-archon, tpt-mnemosyne
 - [ ] Docs site, benchmarks page, 1.0 stability policy

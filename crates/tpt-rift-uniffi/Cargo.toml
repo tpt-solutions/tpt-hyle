@@ -1,0 +1,24 @@
+[package]
+name = "tpt-rift-uniffi"
+description = "UniFFI bindings for tpt-rift: Kotlin and Swift SDKs over a file-backed replica"
+readme = "README.md"
+keywords = ["uniffi", "kotlin", "swift", "offline-first", "tpt-rift"]
+categories = ["api-bindings", "database"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+tpt-hyle = { workspace = true, features = ["std"] }
+tpt-rift = { workspace = true }
+uniffi = { version = "0.32", features = ["cli"] }

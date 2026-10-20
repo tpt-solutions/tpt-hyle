@@ -11,6 +11,7 @@ members = [
     "crates/tpt-rift-transport-webrtc",
     "crates/tpt-hyle-test-utils",
     "crates/tpt-rift-discovery",
+    "crates/tpt-rift-uniffi",
 ]
 
 [workspace.package]
