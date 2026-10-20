@@ -14,7 +14,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use tpt_hyle::Hyle;
-use tpt_rift::{Delta, Replica};
+use tpt_rift::{parse_public_key, public_key_hex, Delta, Replica};
 
 uniffi::setup_scaffolding!();
 
@@ -115,6 +115,27 @@ impl SyncStore {
             let stats = r.import(&delta).map_err(store_err)?;
             Ok(stats.applied as u32)
         })
+    }
+
+    /// Trusts a peer's events. `public_key` is the peer's `public_key()`, as 64
+    /// hex digits. Once a peer is trusted, `import_from` refuses any change from
+    /// a node not listed, and any change whose signature does not verify.
+    pub fn add_peer(&self, node_id: String, public_key: String) -> Result<(), SyncError> {
+        let node = parse_node(&node_id)?;
+        let key = parse_public_key(&public_key).map_err(|e| SyncError::Invalid {
+            message: e.to_string(),
+        })?;
+        self.with(|r| {
+            r.trust(node, key).map_err(|e| SyncError::Invalid {
+                message: e.to_string(),
+            })
+        })
+    }
+
+    /// This store's public key, as 64 hex digits. Give it to the peers that
+    /// should accept this store's events.
+    pub fn public_key(&self) -> Result<String, SyncError> {
+        self.with(|r| Ok(public_key_hex(&r.public_key())))
     }
 
     /// The local Lamport clock.

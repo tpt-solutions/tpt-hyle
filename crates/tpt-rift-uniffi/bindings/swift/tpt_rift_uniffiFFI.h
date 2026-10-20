@@ -258,6 +258,11 @@ void uniffi_tpt_rift_uniffi_fn_free_syncstore(uint64_t handle, RustCallStatus *_
 uint64_t uniffi_tpt_rift_uniffi_fn_constructor_syncstore_open(RustBuffer path, RustBuffer node_id, RustBuffer passphrase, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_ADD_PEER
+#define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_ADD_PEER
+void uniffi_tpt_rift_uniffi_fn_method_syncstore_add_peer(uint64_t ptr, RustBuffer node_id, RustBuffer public_key, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_DELETE
 #define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_DELETE
 int8_t uniffi_tpt_rift_uniffi_fn_method_syncstore_delete(uint64_t ptr, RustBuffer key, RustCallStatus *_Nonnull out_status
@@ -281,6 +286,11 @@ uint32_t uniffi_tpt_rift_uniffi_fn_method_syncstore_import_from(uint64_t ptr, Ru
 #ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_LAMPORT
 #define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_LAMPORT
 uint64_t uniffi_tpt_rift_uniffi_fn_method_syncstore_lamport(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_PUBLIC_KEY
+#define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_PUBLIC_KEY
+RustBuffer uniffi_tpt_rift_uniffi_fn_method_syncstore_public_key(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_FN_METHOD_SYNCSTORE_PUT
@@ -548,6 +558,12 @@ void ffi_tpt_rift_uniffi_rust_future_free_void(uint64_t handle
 void ffi_tpt_rift_uniffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_CHECKSUM_METHOD_SYNCSTORE_ADD_PEER
+#define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_CHECKSUM_METHOD_SYNCSTORE_ADD_PEER
+uint16_t uniffi_tpt_rift_uniffi_checksum_method_syncstore_add_peer(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_CHECKSUM_METHOD_SYNCSTORE_DELETE
 #define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_CHECKSUM_METHOD_SYNCSTORE_DELETE
 uint16_t uniffi_tpt_rift_uniffi_checksum_method_syncstore_delete(void
@@ -575,6 +591,12 @@ uint16_t uniffi_tpt_rift_uniffi_checksum_method_syncstore_import_from(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_CHECKSUM_METHOD_SYNCSTORE_LAMPORT
 #define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_CHECKSUM_METHOD_SYNCSTORE_LAMPORT
 uint16_t uniffi_tpt_rift_uniffi_checksum_method_syncstore_lamport(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_CHECKSUM_METHOD_SYNCSTORE_PUBLIC_KEY
+#define UNIFFI_FFIDEF_UNIFFI_TPT_RIFT_UNIFFI_CHECKSUM_METHOD_SYNCSTORE_PUBLIC_KEY
+uint16_t uniffi_tpt_rift_uniffi_checksum_method_syncstore_public_key(void
     
 );
 #endif

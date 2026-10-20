@@ -18,7 +18,7 @@ mod sync;
 mod transport;
 mod wire;
 
-pub use directory::Directory;
+pub use directory::{parse_public_key, public_key_hex, Directory};
 pub use doc::{delete_doc, get_doc, put_doc};
 pub use error::RiftError;
 pub use mock::MockTransport;

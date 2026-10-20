@@ -265,6 +265,12 @@ impl<S: Storage> Hyle<S> {
         Ok(signature_in(&plain))
     }
 
+    /// Signs an acknowledgement made by this node. See [`verify_ack`](crate::verify_ack).
+    pub fn sign_ack(&self, generation: u32, offset: u64, lamport: u64) -> [u8; EVENT_SIG_LEN] {
+        let message = crate::format::ack_message(self.node_id, generation, offset, lamport);
+        self.signer.sign(&message).to_bytes()
+    }
+
     /// Signs an event made by this node.
     fn sign(
         &self,

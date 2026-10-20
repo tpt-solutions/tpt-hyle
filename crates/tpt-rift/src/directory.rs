@@ -4,6 +4,24 @@ use std::collections::BTreeMap;
 
 use crate::RiftError;
 
+/// Parses a 64-digit hex public key.
+pub fn parse_public_key(text: &str) -> Result<[u8; 32], RiftError> {
+    let bad = || RiftError::Protocol("public key must be 64 hex digits");
+    if text.len() != 64 || !text.is_ascii() {
+        return Err(bad());
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[2 * i..2 * i + 2], 16).map_err(|_| bad())?;
+    }
+    Ok(out)
+}
+
+/// Formats a public key as lowercase hex.
+pub fn public_key_hex(key: &[u8; 32]) -> String {
+    key.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Public keys by node id. A replica with a directory accepts an event only if
 /// its node is listed and its signature verifies. See
 /// [`Replica::set_directory`](crate::Replica::set_directory).

@@ -7,8 +7,10 @@ It does no I/O: JavaScript moves the bytes with `export` and `import`.
   passphrase, bytes)` restores one from `save()`. A wrong passphrase is an error.
 - `save()` returns the whole store, sealed. Persist it, for example in IndexedDB
   (`web/persistence.js`).
-- Writes are signed by the store's node. The bindings do not expose a
-  directory of node keys yet, so `import` does not check signatures.
+- Writes are signed by the store's node. Call `add_peer(node_id, public_key)`
+  with a peer's `public_key()` to make `import` refuse changes from unlisted
+  nodes or with bad signatures. Trust is not saved, so add peers again after
+  `Store.load`.
 
 ```sh
 wasm-pack build --target nodejs crates/tpt-rift-wasm --out-dir pkg-node

@@ -631,6 +631,36 @@ async fn after_collection_a_replayed_old_write_is_refused_and_a_new_one_is_kept(
 }
 
 #[tokio::test]
+async fn a_forged_acknowledgement_closes_the_link() {
+    let addr = start_hub(vec![entry("ta", 10, &[""], &[""])]).await;
+    let client = client(addr, "ta", 10).await;
+    client
+        .transport
+        .send(Delta {
+            generation: 0,
+            ack: Some(tpt_rift::Ack {
+                offset: 128,
+                lamport: 0,
+                signature: [3; 64],
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let closed = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match client.transport.receive().await {
+                Err(_) => return true,
+                Ok(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await
+    .expect("the hub should close a link that sent a forged acknowledgement");
+    assert!(closed);
+}
+
+#[tokio::test]
 async fn a_forged_signature_closes_the_link() {
     let addr = start_hub(vec![entry("ta", 10, &[""], &[""])]).await;
     let client = client(addr, "ta", 10).await;

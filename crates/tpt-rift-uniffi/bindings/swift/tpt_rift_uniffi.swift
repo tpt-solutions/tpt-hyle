@@ -591,6 +591,13 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 public protocol SyncStoreProtocol: AnyObject, Sendable {
     
     /**
+     * Trusts a peer's events. `public_key` is the peer's `public_key()`, as 64
+     * hex digits. Once a peer is trusted, `import_from` refuses any change from
+     * a node not listed, and any change whose signature does not verify.
+     */
+    func addPeer(nodeId: String, publicKey: String) throws 
+    
+    /**
      * Deletes `key`. Returns whether it was present.
      */
     func delete(key: Data) throws  -> Bool
@@ -615,6 +622,12 @@ public protocol SyncStoreProtocol: AnyObject, Sendable {
      * The local Lamport clock.
      */
     func lamport() throws  -> UInt64
+    
+    /**
+     * This store's public key, as 64 hex digits. Give it to the peers that
+     * should accept this store's events.
+     */
+    func publicKey() throws  -> String
     
     /**
      * Writes `value` under `key`.
@@ -694,6 +707,21 @@ public static func `open`(path: String, nodeId: String, passphrase: String)throw
 
     
     /**
+     * Trusts a peer's events. `public_key` is the peer's `public_key()`, as 64
+     * hex digits. Once a peer is trusted, `import_from` refuses any change from
+     * a node not listed, and any change whose signature does not verify.
+     */
+open func addPeer(nodeId: String, publicKey: String)throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
+        uniffiCallStatus in
+    uniffi_tpt_rift_uniffi_fn_method_syncstore_add_peer(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(nodeId),
+        FfiConverterString.lower(publicKey),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Deletes `key`. Returns whether it was present.
      */
 open func delete(key: Data)throws  -> Bool  {
@@ -753,6 +781,19 @@ open func lamport()throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
         uniffiCallStatus in
     uniffi_tpt_rift_uniffi_fn_method_syncstore_lamport(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * This store's public key, as 64 hex digits. Give it to the peers that
+     * should accept this store's events.
+     */
+open func publicKey()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+        uniffiCallStatus in
+    uniffi_tpt_rift_uniffi_fn_method_syncstore_public_key(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -952,6 +993,9 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_tpt_rift_uniffi_checksum_method_syncstore_add_peer() != 53687) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_tpt_rift_uniffi_checksum_method_syncstore_delete() != 40765) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -965,6 +1009,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_tpt_rift_uniffi_checksum_method_syncstore_lamport() != 6496) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_tpt_rift_uniffi_checksum_method_syncstore_public_key() != 40664) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_tpt_rift_uniffi_checksum_method_syncstore_put() != 17640) {

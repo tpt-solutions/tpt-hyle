@@ -79,13 +79,14 @@ Three facts together:
 - **Collection needs the server stopped.** It rewrites the store file.
 - **Collection starts a new generation.** Every client does a full resync on
   its next connection. The cost is bandwidth, once per collection.
-- **Trust.** The hub believes a client's ack. A token holder who lies about its
-  ack can make the hub drop a tombstone that client has not applied. The hub
-  caps an ack at its own log end and clock, but a lie within those bounds is
-  not detected. Signed events (planned) would let the hub check a client's
-  clock against its signatures.
-- **Wire version 2.** `Delta` carries the optional `caught_up` and `ack`. A
-  version 1 peer is refused.
+- **Trust.** The hub believes a client's claim about its own state. Each ack is
+  signed by that client's node key, so no other node can forge one. A client can
+  still sign a false claim about what it has applied. The hub caps an ack at its
+  own log end and clock, which bounds the damage but does not remove it. The
+  remaining cure is for the client to prove its state, which the format does
+  not yet do.
+- **Wire version 4.** `Delta` carries the optional `caught_up` and `ack`. The ack
+  carries a signature. Older peers are refused.
 - **The export cursor now moves to the log end** when the export runs out of
   events, instead of stopping at the last event. This lets a caught-up check
   compare against the true end. Commit frames carry no events, so skipping

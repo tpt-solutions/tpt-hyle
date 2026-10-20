@@ -8,7 +8,7 @@ use crate::RiftError;
 /// Magic bytes at the start of every delta.
 pub const MAGIC: [u8; 4] = *b"RIFT";
 /// Version of this encoding.
-pub const WIRE_VERSION: u8 = 3;
+pub const WIRE_VERSION: u8 = 4;
 
 /// Fixed part of one change: lamport(8) node_id(16) flags(1) key_len(2)
 /// value_len(4). The signature follows the value.
@@ -59,6 +59,9 @@ pub struct Ack {
     pub offset: u64,
     /// The client's Lamport clock, read before its last complete export.
     pub lamport: u64,
+    /// Ed25519 signature by the client's node over the generation, offset and
+    /// lamport. See `tpt_hyle::verify_ack`.
+    pub signature: [u8; 64],
 }
 
 /// A batch of changes, with the generation of the log they came from.
@@ -104,6 +107,7 @@ impl Delta {
         if let Some(ack) = self.ack {
             out.extend_from_slice(&ack.offset.to_le_bytes());
             out.extend_from_slice(&ack.lamport.to_le_bytes());
+            out.extend_from_slice(&ack.signature);
         }
         for c in &self.changes {
             out.extend_from_slice(&c.lamport.to_le_bytes());
@@ -143,6 +147,7 @@ impl Delta {
             Some(Ack {
                 offset: r.u64()?,
                 lamport: r.u64()?,
+                signature: r.sig()?,
             })
         } else {
             None
@@ -244,6 +249,12 @@ impl<'a> Reader<'a> {
         a.copy_from_slice(self.take(16)?);
         Ok(u128::from_le_bytes(a))
     }
+
+    fn sig(&mut self) -> Result<[u8; 64], RiftError> {
+        let mut a = [0u8; 64];
+        a.copy_from_slice(self.take(64)?);
+        Ok(a)
+    }
 }
 
 #[cfg(test)]
@@ -297,6 +308,7 @@ mod tests {
             ack: Some(Ack {
                 offset: 4096,
                 lamport: 77,
+                signature: [9; 64],
             }),
             ..sample()
         };
@@ -307,6 +319,7 @@ mod tests {
             ack: Some(Ack {
                 offset: 2,
                 lamport: 3,
+                signature: [8; 64],
             }),
             ..sample()
         };

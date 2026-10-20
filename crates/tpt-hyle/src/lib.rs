@@ -50,7 +50,7 @@ mod store;
 
 pub use error::Error;
 #[cfg(feature = "alloc")]
-pub use format::{event_message, verify_event};
+pub use format::{ack_message, event_message, verify_ack, verify_event};
 #[cfg(feature = "alloc")]
 #[cfg(feature = "alloc")]
 pub use format::{ChangeEvent, EVENT_SIG_LEN, FORMAT_VERSION, HEADER_LEN, MAX_KEY_LEN};

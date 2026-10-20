@@ -20,12 +20,12 @@ built on it is in [ADR 0014](adr/0014-tombstone-collection.md).
 | Offset | Size | Field        | Notes                                        |
 |--------|------|--------------|----------------------------------------------|
 | 0      | 4    | magic        | `RIFT`                                       |
-| 4      | 1    | version      | `3`                                          |
+| 4      | 1    | version      | `4`                                          |
 | 5      | 4    | generation   | Generation of the sender's log at export     |
 | 9      | 4    | count        | Number of changes. At most `1 << 20`         |
 | 13     | 1    | control      | Bit 0: `caught_up` present. Bit 1: `ack` present. Other bits must be `0` |
 | 14     | 8    | caught_up    | Only if control bit 0. Hub log offset       |
-| …      | 16   | ack          | Only if control bit 1: `offset` (8), `lamport` (8) |
+| …      | 80   | ack          | Only if control bit 1: `offset` (8), `lamport` (8), `signature` (64) |
 | …      | ...  | changes      | `count` entries, in the sender's log order   |
 
 Each change:
@@ -56,7 +56,10 @@ before.
 
 - **`caught_up`** is sent by the hub. It says that the hub has sent this client
   every change in its log up to that offset, in the delta's generation.
-- **`ack`** is sent by a client. It says that the client has applied the hub
+- **`ack`** is sent by a client, and it is signed by that client's node key over
+  the generation, offset and lamport (`tpt_hyle::verify_ack`). A hub refuses an
+  ack that does not verify.
+  It says that the client has applied the hub
   up to the `caught_up` offset it last received, and has pushed every write it
   made with a lamport at or below `ack.lamport`. The client reads
   `ack.lamport` before its export, and sends the ack only after an export that
@@ -89,5 +92,5 @@ is what they refer to, and a receiver ignores them if it is in another one.
 ## Versioning
 
 Any change to the bytes above bumps `WIRE_VERSION`. Receivers reject versions
-they do not know. Versions 1 and 2 are not accepted by version 3 code, and there is no
+they do not know. Versions 1, 2 and 3 are not accepted by version 4 code, and there is no
 negotiation. Peers must be upgraded together.

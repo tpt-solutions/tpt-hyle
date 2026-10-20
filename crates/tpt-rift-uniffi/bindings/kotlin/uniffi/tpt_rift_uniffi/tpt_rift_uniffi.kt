@@ -675,6 +675,8 @@ internal object IntegrityCheckingUniffiLib {
     }
 
     internal fun ensureInitialized() = Unit
+    external fun uniffi_tpt_rift_uniffi_checksum_method_syncstore_add_peer(
+    ): Int
     external fun uniffi_tpt_rift_uniffi_checksum_method_syncstore_delete(
     ): Int
     external fun uniffi_tpt_rift_uniffi_checksum_method_syncstore_export_for(
@@ -684,6 +686,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_tpt_rift_uniffi_checksum_method_syncstore_import_from(
     ): Int
     external fun uniffi_tpt_rift_uniffi_checksum_method_syncstore_lamport(
+    ): Int
+    external fun uniffi_tpt_rift_uniffi_checksum_method_syncstore_public_key(
     ): Int
     external fun uniffi_tpt_rift_uniffi_checksum_method_syncstore_put(
     ): Int
@@ -715,6 +719,8 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_tpt_rift_uniffi_fn_constructor_syncstore_open(`path`: RustBuffer.ByValue,`nodeId`: RustBuffer.ByValue,`passphrase`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_tpt_rift_uniffi_fn_method_syncstore_add_peer(`ptr`: Long,`nodeId`: RustBuffer.ByValue,`publicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_tpt_rift_uniffi_fn_method_syncstore_delete(`ptr`: Long,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     external fun uniffi_tpt_rift_uniffi_fn_method_syncstore_export_for(`ptr`: Long,`peerNode`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -725,6 +731,8 @@ internal object UniffiLib {
     ): Int
     external fun uniffi_tpt_rift_uniffi_fn_method_syncstore_lamport(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_tpt_rift_uniffi_fn_method_syncstore_public_key(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_tpt_rift_uniffi_fn_method_syncstore_put(`ptr`: Long,`key`: RustBuffer.ByValue,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun ffi_tpt_rift_uniffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -846,6 +854,9 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if ((lib.uniffi_tpt_rift_uniffi_checksum_method_syncstore_add_peer() and 0xFFFF) != 53687) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_tpt_rift_uniffi_checksum_method_syncstore_delete() and 0xFFFF) != 40765) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -859,6 +870,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_tpt_rift_uniffi_checksum_method_syncstore_lamport() and 0xFFFF) != 6496) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_tpt_rift_uniffi_checksum_method_syncstore_public_key() and 0xFFFF) != 40664) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_tpt_rift_uniffi_checksum_method_syncstore_put() and 0xFFFF) != 17640) {
@@ -1271,6 +1285,13 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 public interface SyncStoreInterface {
     
     /**
+     * Trusts a peer's events. `public_key` is the peer's `public_key()`, as 64
+     * hex digits. Once a peer is trusted, `import_from` refuses any change from
+     * a node not listed, and any change whose signature does not verify.
+     */
+    fun `addPeer`(`nodeId`: kotlin.String, `publicKey`: kotlin.String)
+    
+    /**
      * Deletes `key`. Returns whether it was present.
      */
     fun `delete`(`key`: kotlin.ByteArray): kotlin.Boolean
@@ -1295,6 +1316,12 @@ public interface SyncStoreInterface {
      * The local Lamport clock.
      */
     fun `lamport`(): kotlin.ULong
+    
+    /**
+     * This store's public key, as 64 hex digits. Give it to the peers that
+     * should accept this store's events.
+     */
+    fun `publicKey`(): kotlin.String
     
     /**
      * Writes `value` under `key`.
@@ -1410,6 +1437,26 @@ open class SyncStore: Disposable, AutoCloseable, SyncStoreInterface
 
     
     /**
+     * Trusts a peer's events. `public_key` is the peer's `public_key()`, as 64
+     * hex digits. Once a peer is trusted, `import_from` refuses any change from
+     * a node not listed, and any change whose signature does not verify.
+     */
+    @Throws(SyncException::class)override fun `addPeer`(`nodeId`: kotlin.String, `publicKey`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(SyncException) { _status ->
+    UniffiLib.uniffi_tpt_rift_uniffi_fn_method_syncstore_add_peer(
+        it,
+        
+        FfiConverterString.lower(`nodeId`),
+        FfiConverterString.lower(`publicKey`),_status)
+}
+    }
+    
+    
+
+    
+    /**
      * Deletes `key`. Returns whether it was present.
      */
     @Throws(SyncException::class)override fun `delete`(`key`: kotlin.ByteArray): kotlin.Boolean {
@@ -1490,6 +1537,24 @@ open class SyncStore: Disposable, AutoCloseable, SyncStoreInterface
     callWithHandle {
     uniffiRustCallWithError(SyncException) { _status ->
     UniffiLib.uniffi_tpt_rift_uniffi_fn_method_syncstore_lamport(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * This store's public key, as 64 hex digits. Give it to the peers that
+     * should accept this store's events.
+     */
+    @Throws(SyncException::class)override fun `publicKey`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SyncException) { _status ->
+    UniffiLib.uniffi_tpt_rift_uniffi_fn_method_syncstore_public_key(
         it,
         _status)
 }

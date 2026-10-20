@@ -126,3 +126,28 @@ fn a_remote_event_keeps_the_signature_it_arrived_with() {
     let (_, _, _, got) = events(&mut relay).remove(0);
     assert_eq!(got, sig);
 }
+
+#[test]
+fn an_ack_signature_binds_every_field() {
+    use tpt_hyle::verify_ack;
+    let db = store(7, 1);
+    let public = db.public_key();
+    let sig = db.sign_ack(3, 4096, 90);
+    assert!(verify_ack(&public, 7, 3, 4096, 90, &sig));
+    assert!(!verify_ack(&public, 7, 4, 4096, 90, &sig), "generation");
+    assert!(!verify_ack(&public, 7, 3, 4097, 90, &sig), "offset");
+    assert!(!verify_ack(&public, 7, 3, 4096, 91, &sig), "lamport");
+    assert!(!verify_ack(&public, 8, 3, 4096, 90, &sig), "node");
+}
+
+#[test]
+fn an_event_signature_is_not_an_ack_signature() {
+    use tpt_hyle::verify_ack;
+    let mut db = store(7, 1);
+    db.put(b"k", b"v").unwrap();
+    let (ev, key, value, sig) = events(&mut db).remove(0);
+    let public = db.public_key();
+    // The domains differ, so a signed event cannot stand in for an ack.
+    assert!(!verify_ack(&public, 7, 0, 0, ev.lamport, &sig));
+    assert!(check(&public, &ev, &key, &value, &sig));
+}

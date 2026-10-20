@@ -53,13 +53,16 @@ async fn an_ack_follows_a_marker_once_the_export_is_complete() {
     sync_round(&mut r, &mut link, &client, 16).await.unwrap();
 
     let got = acks(&drain(&hub).await);
-    assert_eq!(
-        got,
-        vec![Ack {
-            offset: end,
-            lamport: 0
-        }]
-    );
+    assert_eq!(got.len(), 1);
+    assert_eq!((got[0].offset, got[0].lamport), (end, 0));
+    assert!(tpt_hyle::verify_ack(
+        &r.public_key(),
+        10,
+        0,
+        end,
+        0,
+        &got[0].signature
+    ));
 }
 
 #[tokio::test]
@@ -84,13 +87,16 @@ async fn no_ack_while_the_export_is_incomplete() {
     // clock read before the export, which is the last write's lamport.
     sync_round(&mut r, &mut link, &client, 2).await.unwrap();
     let got = acks(&drain(&hub).await);
-    assert_eq!(
-        got,
-        vec![Ack {
-            offset: end,
-            lamport: 3
-        }]
-    );
+    assert_eq!(got.len(), 1);
+    assert_eq!((got[0].offset, got[0].lamport), (end, 3));
+    assert!(tpt_hyle::verify_ack(
+        &r.public_key(),
+        10,
+        0,
+        end,
+        3,
+        &got[0].signature
+    ));
 }
 
 #[tokio::test]

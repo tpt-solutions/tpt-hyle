@@ -8,9 +8,14 @@ Transport is left to the app, as on the web.
 wrong passphrase is an error, and the file is left untouched. Losing the
 passphrase loses the data.
 
-Every write is signed by the store's node. The bindings do not yet expose a
-directory of node keys, so `import_from` does not check signatures. A replica
-that needs that check must be built in Rust with `Replica::set_directory`.
+Every write is signed by the store's node. Trust is opt-in: call
+`add_peer(node_id, public_key)` with a peer's `public_key()`. Once a peer is
+trusted, `import_from` refuses changes from nodes not listed and changes whose
+signature does not verify. Trust is not saved. Add peers again after each
+`open`.
+
+Acknowledgements are signed by the store's node too, so a relay cannot forge
+one.
 
 ## Generated sources
 

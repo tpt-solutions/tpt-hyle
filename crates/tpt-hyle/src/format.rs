@@ -304,6 +304,49 @@ pub fn event_message(
     out
 }
 
+/// Domain separator for acknowledgement signatures. It differs from the event
+/// label, so an event signature cannot be replayed as an ack, or the reverse.
+#[cfg(feature = "alloc")]
+pub const ACK_DOMAIN: &[u8] = b"tpt-hyle ack v1";
+
+/// The bytes an acknowledgement covers: the hub generation, the hub log offset
+/// the node has applied through, and the node's clock at that point.
+#[cfg(feature = "alloc")]
+pub fn ack_message(
+    node_id: u128,
+    generation: u32,
+    offset: u64,
+    lamport: u64,
+) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec::Vec::with_capacity(ACK_DOMAIN.len() + 16 + 4 + 8 + 8);
+    out.extend_from_slice(ACK_DOMAIN);
+    out.extend_from_slice(&node_id.to_le_bytes());
+    out.extend_from_slice(&generation.to_le_bytes());
+    out.extend_from_slice(&offset.to_le_bytes());
+    out.extend_from_slice(&lamport.to_le_bytes());
+    out
+}
+
+/// Checks an acknowledgement signature under a node's public key.
+#[cfg(feature = "alloc")]
+pub fn verify_ack(
+    public_key: &[u8; 32],
+    node_id: u128,
+    generation: u32,
+    offset: u64,
+    lamport: u64,
+    signature: &[u8; EVENT_SIG_LEN],
+) -> bool {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    let Ok(verifying) = VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+    let message = ack_message(node_id, generation, offset, lamport);
+    verifying
+        .verify_strict(&message, &Signature::from_bytes(signature))
+        .is_ok()
+}
+
 /// Checks an event signature against a node's Ed25519 public key. Uses the
 /// strict rules: a non-canonical signature or a weak key is refused.
 #[cfg(feature = "alloc")]

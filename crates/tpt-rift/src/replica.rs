@@ -59,6 +59,19 @@ impl<S: Storage> Replica<S> {
         self.directory = Some(directory);
     }
 
+    /// Lists `node_id` with `public_key` in this replica's directory, and turns
+    /// checking on. The first call also lists this replica's own node, so events
+    /// it wrote still pass when a peer sends them back.
+    pub fn trust(&mut self, node_id: u128, public_key: [u8; 32]) -> Result<(), RiftError> {
+        let own = self.node_id();
+        let own_key = self.public_key();
+        let directory = self.directory.get_or_insert_with(Directory::new);
+        if directory.get(own).is_none() {
+            directory.insert(own, own_key)?;
+        }
+        directory.insert(node_id, public_key)
+    }
+
     /// This replica's Ed25519 public key. Peers list it to accept its events.
     pub fn public_key(&self) -> [u8; 32] {
         self.store.public_key()

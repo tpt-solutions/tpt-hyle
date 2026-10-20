@@ -94,7 +94,12 @@ pub async fn sync_round<S: Storage, T: Transport>(
     }
 
     if let Some((generation, offset)) = link.caught_up {
-        let ack = Ack { offset, lamport };
+        let signature = replica.store_ref().sign_ack(generation, offset, lamport);
+        let ack = Ack {
+            offset,
+            lamport,
+            signature,
+        };
         if complete && link.last_ack != Some((generation, ack)) {
             transport
                 .send(Delta {

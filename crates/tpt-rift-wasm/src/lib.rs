@@ -15,7 +15,7 @@
 //! bytes are not readable without it.
 
 use tpt_hyle::{Hyle, VecStorage};
-use tpt_rift::{Delta, Replica};
+use tpt_rift::{parse_public_key, public_key_hex, Delta, Replica};
 use wasm_bindgen::prelude::*;
 
 fn js_err(e: impl std::fmt::Display) -> JsError {
@@ -105,6 +105,20 @@ impl Store {
         let delta = Delta::decode(bytes).map_err(js_err)?;
         let stats = self.replica.import(&delta).map_err(js_err)?;
         Ok(stats.applied as u32)
+    }
+
+    /// Trusts a peer's events. `public_key` is the peer's `public_key()`, as 64
+    /// hex digits. Once a peer is trusted, `import` refuses any change from a
+    /// node not listed, and any change whose signature does not verify.
+    pub fn add_peer(&mut self, node_id: &str, public_key: &str) -> Result<(), JsError> {
+        let node = parse_node(node_id)?;
+        let key = parse_public_key(public_key).map_err(js_err)?;
+        self.replica.trust(node, key).map_err(js_err)
+    }
+
+    /// This store's public key, as 64 hex digits.
+    pub fn public_key(&self) -> String {
+        public_key_hex(&self.replica.public_key())
     }
 
     /// The whole store as bytes, for persisting. Encrypted.

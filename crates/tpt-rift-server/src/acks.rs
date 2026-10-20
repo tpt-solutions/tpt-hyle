@@ -176,7 +176,11 @@ mod tests {
     };
 
     fn ack(offset: u64, lamport: u64) -> Ack {
-        Ack { offset, lamport }
+        Ack {
+            offset,
+            lamport,
+            signature: [0; 64],
+        }
     }
 
     #[test]

@@ -102,7 +102,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 
 ## Open questions
 
-- [x] Security model: encryption at rest (format v3, [ADR 0013](docs/adr/0013-encryption-and-single-file.md)) and signed events (format v4, [ADR 0015](docs/adr/0015-signed-events.md)). Still open: a passphrase holder can sign as its node, and acks are unsigned, so a lying client can defeat tombstone collection ([ADR 0014](docs/adr/0014-tombstone-collection.md))
+- [x] Security model: encryption at rest (format v3, [ADR 0013](docs/adr/0013-encryption-and-single-file.md)) and signed events (format v4, [ADR 0015](docs/adr/0015-signed-events.md)). Still open: a passphrase holder can sign as its node, and a client can sign a false ack about its own state, which can defeat tombstone collection. Acks are signed, so no other node can forge one ([ADR 0014](docs/adr/0014-tombstone-collection.md))
 - [ ] Schema/versioning and migration story
 - [ ] Is "100% formal verification" realistic with serde in the path? Scope proofs to the no_alloc core.
 - [ ] Spec's `LWW-ES` vs JSON CRDT selection: per-key type tag or per-namespace?

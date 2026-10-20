@@ -38,7 +38,7 @@ use sha2::{Digest, Sha256};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::Mutex;
-use tpt_hyle::{verify_event, FileStorage, Hyle};
+use tpt_hyle::{verify_ack, verify_event, FileStorage, Hyle};
 use tpt_rift::{Delta, PeerCursor, PeerLink, Replica, RiftError, Transport};
 use tpt_rift_transport_ws::{accept_with, WebSocketTransport};
 
@@ -432,6 +432,18 @@ pub async fn serve_connection(
                 hub.import(&accepted)?;
             }
             if let Some(ack) = ack {
+                if !verify_ack(
+                    &auth.public_key,
+                    auth.node_id,
+                    generation,
+                    ack.offset,
+                    ack.lamport,
+                    &ack.signature,
+                ) {
+                    return Err(RiftError::Protocol(
+                        "acknowledgement signature does not verify",
+                    ));
+                }
                 access
                     .acks_lock()
                     .record(&auth.key, position, generation, ack)

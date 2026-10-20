@@ -67,3 +67,28 @@ fn malformed_input_is_an_error_not_a_trap() {
     assert!(a.import(b"not a delta").is_err());
     assert!(Store::new("not a number", PASS).is_err());
 }
+
+#[wasm_bindgen_test]
+fn a_trusted_peer_imports_and_a_forged_change_does_not() {
+    let mut a = Store::new("1", PASS).unwrap();
+    let mut b = Store::new("2", PASS).unwrap();
+    a.put(b"k", b"v").unwrap();
+    b.add_peer("1", &a.public_key()).unwrap();
+
+    let mut bytes = a.export("2").unwrap();
+    let at = bytes.len() - 65;
+    bytes[at] ^= 1;
+    assert!(b.import(&bytes).is_err());
+    assert_eq!(b.get(b"k").unwrap(), None);
+
+    let good = a.export("2").unwrap();
+    assert_eq!(b.import(&good).unwrap(), 1);
+    assert_eq!(b.get(b"k").unwrap().as_deref(), Some(&b"v"[..]));
+}
+
+#[wasm_bindgen_test]
+fn a_bad_public_key_is_refused() {
+    let mut a = Store::new("1", PASS).unwrap();
+    assert!(a.add_peer("2", "not hex").is_err());
+    assert_eq!(a.public_key().len(), 64);
+}

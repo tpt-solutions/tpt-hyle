@@ -38,10 +38,10 @@ These protections have limits:
   store can sign as its node. Signatures prove which store wrote an event, not
   which person did.
 - The file reveals its size, the number of frames, and when they were written.
-- Client acknowledgements are not signed. A client that lies in an ack can make
-  the hub collect a tombstone that the client has not applied. See
-  [ADR 0014](docs/adr/0014-tombstone-collection.md).
-- A replica without a directory of node keys does not check signatures.
+- A client can sign a false acknowledgement about its own state. If it does,
+  the hub may collect a tombstone that client has not applied. No other node can
+  forge an acknowledgement. See [ADR 0014](docs/adr/0014-tombstone-collection.md).
+- A replica without a trusted peer does not check signatures.
 - Losing the passphrase loses the data. There is no recovery path.
 
 Do not use tpt-hyle as the only protection for data that must stay secret from

@@ -51,14 +51,14 @@ wire change carries the same signature. The format is in
   prove which store, and so which node, wrote an event. They do not prove which
   person did. That is the limit of this design, and it is stated in the format
   doc.
-- **The directory is distributed out of band.** The hub checks clients through
-  the config. A client checks other nodes only if the operator gives it a
-  directory. The hub does not publish one. A client with no directory trusts the
-  hub to relay honestly, as before.
-- **The hub does not verify acks.** Signed events do not sign acknowledgements,
-  so a lying client can still defeat tombstone collection
-  ([ADR 0014](0014-tombstone-collection.md)). Signing acks is a possible next
-  step.
+- **Trust is configured, not discovered.** The hub learns client keys from its
+  config. A client learns peer keys from its operator, through `Replica::trust`
+  or `add_peer` in the bindings. Nothing publishes the keys, and the keys are
+  not saved across opens, so a client must re-add its peers at startup.
+- **Acknowledgements are signed.** Each ack carries the client node's signature
+  over the generation, offset and clock ([ADR 0014](0014-tombstone-collection.md)).
+  The hub refuses an ack that does not verify. This stops one client forging
+  another's ack. It does not stop a client lying about its own state.
 
 ## Alternatives rejected
 
