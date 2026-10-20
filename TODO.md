@@ -79,7 +79,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] Multi-client fan-out (polling hub; each connection keeps its own cursor)
 - [x] Message size limit. Rate limiting is not built
 - [ ] TLS: deliberately not in the server. Expected from a reverse proxy, documented in docs/server.md
-- [ ] Docker image and deploy docs (not attempted)
+- [ ] Docker image and deploy docs: Dockerfile and docs written, not built (no Docker daemon was running here)
 - [ ] End-to-end demo app syncing to self-hosted server
 
 ## Phase 4: P2P + edge (Year 4)
@@ -88,12 +88,12 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] LAN discovery by UDP broadcast, with unauthenticated announcements ([ADR 0011](docs/adr/0011-lan-discovery.md)). The broadcast path itself is not tested; loopback tests use unicast
 - [x] `tpt-rift-wasm`: wasm-bindgen API over an in-memory store, tested under Node ([ADR 0010](docs/adr/0010-wasm-bindings.md)). IndexedDB persistence is not built
 - [ ] Browser demo: offline web app syncing P2P (the Node demo covers the same calls; no page yet)
-- [ ] Kani harnesses: allocator bounds, segment-offset invariants through compaction
-- [ ] CRDT determinism proof/tests (order-independence)
+- [ ] Kani harnesses: 5 verified for record decoding, header validation, the CRC claim, and fixed-storage bounds (kani/README.md). Not yet: allocator bounds and segment-offset invariants through compaction
+- [x] CRDT determinism tests: convergence under random order and duplication for LWW and JSON documents (mutation-checked). Not a machine-checked proof
 
 ## Phase 5: Mobile + ecosystem (Year 5)
 
-- [ ] 100% Kani coverage of core parser; publish proofs
+- [ ] 100% Kani coverage of core parser; publish proofs (5 harnesses so far, on the parsers that take untrusted bytes)
 - [ ] Swift (iOS) SDK via UniFFI or C ABI
 - [ ] Kotlin (Android) SDK
 - [ ] Nested JSON CRDT (concurrent edits in same object)
