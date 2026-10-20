@@ -213,6 +213,7 @@ async fn a_write_outside_permitted_prefixes_closes_the_link() {
                 node_id: 13,
                 tombstone: false,
             }],
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -253,6 +254,7 @@ async fn a_spoofed_node_id_is_skipped_not_applied() {
                 node_id: 10,
                 tombstone: false,
             }],
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -286,6 +288,7 @@ async fn an_oversized_message_closes_the_link() {
                 node_id: 10,
                 tombstone: false,
             }],
+            ..Default::default()
         })
         .await;
     // Either the send itself fails, or the hub drops the link and the
@@ -435,4 +438,186 @@ async fn a_client_over_its_message_rate_is_disconnected() {
     .await
     .unwrap_or(false);
     assert!(closed, "the hub should disconnect a client over its rate");
+}
+
+const PASS: &[u8] = b"test hub passphrase";
+
+/// A config whose store is a real file, so a test can compact it.
+fn file_config(tokens: Vec<TokenConfig>) -> Config {
+    let dir = std::env::temp_dir().join(format!(
+        "tpt-rift-server-gc-{}-{}",
+        std::process::id(),
+        rand_suffix()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    Config {
+        store: dir.join("hub"),
+        listen: "127.0.0.1:0".into(),
+        node_id: HUB_NODE.to_string(),
+        max_message_bytes: 1 << 20,
+        poll_ms: 5,
+        messages_per_second: 200,
+        tokens,
+    }
+}
+
+/// Serves `config` the way `run` does, including its saved acks. Returns the
+/// address, and the accept loop so the test can stop it.
+async fn serve_config(config: &Config) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    let (hub_node, mut access) = Access::from_config(config).unwrap();
+    access
+        .load_acks(&tpt_rift_server::acks_path(&config.store))
+        .unwrap();
+    let store = Hyle::open_file(&config.store, hub_node, PASS).unwrap();
+    let hub: Hub = Arc::new(Mutex::new(Replica::new(store)));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(accept_loop(
+        listener,
+        access,
+        hub,
+        Registry::default(),
+        Duration::from_millis(5),
+        1 << 20,
+        200,
+    ));
+    (addr, task)
+}
+
+/// Lets closed connections release the store file before it is compacted.
+async fn settle() {
+    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
+/// The events left in the hub's store file.
+fn stored_events(config: &Config) -> Vec<tpt_hyle::ChangeEvent> {
+    let mut store = Hyle::open_file(&config.store, HUB_NODE, PASS).unwrap();
+    store
+        .events_since(tpt_hyle::HEADER_LEN)
+        .unwrap()
+        .map(|r| r.unwrap().1)
+        .collect()
+}
+
+async fn rounds(a: &mut Client, b: &mut Client, n: usize) {
+    for _ in 0..n {
+        let _ = a.round().await;
+        let _ = b.round().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_tombstone_is_collected_once_every_client_has_acked() {
+    let config = file_config(vec![
+        entry("ta", 10, &[""], &[""]),
+        entry("tb", 11, &[""], &[""]),
+    ]);
+    let (addr, server) = serve_config(&config).await;
+    let mut a = client(addr, "ta", 10).await;
+    let mut b = client(addr, "tb", 11).await;
+
+    a.replica.store().put(b"k", b"v").unwrap();
+    converge(&mut a, &mut b, |_, b| b.has(b"k")).await;
+    a.replica.store().delete(b"k").unwrap();
+    converge(&mut a, &mut b, |_, b| !b.has(b"k")).await;
+    rounds(&mut a, &mut b, 20).await;
+
+    drop(a);
+    drop(b);
+    server.abort();
+    settle().await;
+    let collection = tpt_rift_server::collect_tombstones(&config, PASS).unwrap();
+    assert!(collection.bound.is_some(), "both clients acked");
+    assert!(
+        stored_events(&config).is_empty(),
+        "the tombstone and the value it replaced are both gone"
+    );
+}
+
+#[tokio::test]
+async fn a_client_that_never_acks_blocks_collection() {
+    let config = file_config(vec![
+        entry("ta", 10, &[""], &[""]),
+        entry("tb", 11, &[""], &[""]),
+    ]);
+    let (addr, server) = serve_config(&config).await;
+    let mut a = client(addr, "ta", 10).await;
+    a.replica.store().put(b"k", b"v").unwrap();
+    a.replica.store().delete(b"k").unwrap();
+    for _ in 0..20 {
+        let _ = a.round().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    drop(a);
+    server.abort();
+    settle().await;
+    // `tb` never connected, so it has no ack and nothing may be collected.
+    let collection = tpt_rift_server::collect_tombstones(&config, PASS).unwrap();
+    assert_eq!(collection.bound, None);
+    let events = stored_events(&config);
+    assert_eq!(events.len(), 1, "the tombstone stays");
+    assert!(events[0].tombstone);
+}
+
+#[tokio::test]
+async fn after_collection_a_replayed_old_write_is_refused_and_a_new_one_is_kept() {
+    let config = file_config(vec![
+        entry("ta", 10, &[""], &[""]),
+        entry("tb", 11, &[""], &[""]),
+    ]);
+
+    // First run: write and delete a key, then collect.
+    let (addr, server) = serve_config(&config).await;
+    let mut a = client(addr, "ta", 10).await;
+    let mut b = client(addr, "tb", 11).await;
+    a.replica.store().put(b"k", b"v").unwrap();
+    converge(&mut a, &mut b, |_, b| b.has(b"k")).await;
+    a.replica.store().delete(b"k").unwrap();
+    converge(&mut a, &mut b, |_, b| !b.has(b"k")).await;
+    rounds(&mut a, &mut b, 20).await;
+    drop(a);
+    drop(b);
+    server.abort();
+    settle().await;
+    assert!(tpt_rift_server::collect_tombstones(&config, PASS)
+        .unwrap()
+        .bound
+        .is_some());
+
+    // Second run, in the new generation. Both clients write two keys, so
+    // their clocks reach 2 and their acks set the floor at 2.
+    let (addr, server) = serve_config(&config).await;
+    let mut a = client(addr, "ta", 10).await;
+    let mut b = client(addr, "tb", 11).await;
+    a.replica.store().put(b"pad1", b"x").unwrap();
+    a.replica.store().put(b"pad2", b"x").unwrap();
+    b.replica.store().put(b"pad3", b"x").unwrap();
+    b.replica.store().put(b"pad4", b"x").unwrap();
+    rounds(&mut a, &mut b, 30).await;
+
+    // A write from before the collection, with lamport 1, is replayed. The
+    // hub must refuse it, because every client has already acked past it.
+    a.transport
+        .send(Delta {
+            generation: 1,
+            changes: vec![Change {
+                key: b"j".to_vec(),
+                value: b"old".to_vec(),
+                lamport: 1,
+                node_id: 10,
+                tombstone: false,
+            }],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    // A new write above the floor must still get through.
+    b.replica.store().put(b"fresh", b"new").unwrap();
+    rounds(&mut a, &mut b, 30).await;
+
+    assert!(!b.has(b"j"), "the replayed write was refused");
+    assert_eq!(a.value(b"fresh").as_deref(), Some(&b"new"[..]));
+    server.abort();
 }

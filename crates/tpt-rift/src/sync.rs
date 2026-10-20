@@ -4,15 +4,21 @@ use tpt_hyle::Storage;
 
 use crate::replica::{PeerCursor, Replica};
 use crate::transport::Transport;
+use crate::wire::{Ack, Delta};
 use crate::RiftError;
 
-/// Tracks one peer: its node id, and how far it has read our log.
+/// Tracks one peer: its node id, how far it has read our log, and what it
+/// has acknowledged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerLink {
     /// The peer's node id. Events from this node are not sent back to it.
     pub peer_node: u128,
     /// How far the peer has read our log.
     pub cursor: PeerCursor,
+    /// The latest `caught_up` marker the peer sent us, as `(generation, offset)`.
+    caught_up: Option<(u32, u64)>,
+    /// The last acknowledgement we sent, with the generation it refers to.
+    last_ack: Option<(u32, Ack)>,
 }
 
 impl PeerLink {
@@ -22,14 +28,19 @@ impl PeerLink {
         Self {
             peer_node,
             cursor: replica.start_cursor(),
+            caught_up: None,
+            last_ack: None,
         }
     }
 
     /// Restarts from the beginning of the current generation. Call this after
     /// [`RiftError::StaleGeneration`]. The peer then receives the whole
     /// current log again, which is safe because import is idempotent.
+    /// Markers and acks from the old generation no longer apply.
     pub fn reset<S: Storage>(&mut self, replica: &Replica<S>) {
         self.cursor = replica.start_cursor();
+        self.caught_up = None;
+        self.last_ack = None;
     }
 }
 
@@ -50,6 +61,10 @@ pub struct RoundStats {
 /// after the delta is sent, so a failed send is retried from the same place.
 /// If the peer's cursor is stale, the error is returned, and the caller
 /// should call [`PeerLink::reset`] and try again.
+///
+/// When this round's export reaches the end of our log, and the peer has
+/// sent a `caught_up` marker, the round ends with an [`Ack`] for that marker.
+/// The ack is sent once per marker, after the export it covers.
 pub async fn sync_round<S: Storage, T: Transport>(
     replica: &mut Replica<S>,
     link: &mut PeerLink,
@@ -57,8 +72,12 @@ pub async fn sync_round<S: Storage, T: Transport>(
     max_events: usize,
 ) -> Result<RoundStats, RiftError> {
     let mut stats = RoundStats::default();
+    // Read before exporting. Any write with a lamport at or below this was
+    // made before the export, so a complete export has sent it.
+    let lamport = replica.store_ref().lamport();
 
     let export = replica.export(link.peer_node, link.cursor, max_events)?;
+    let complete = export.next.offset == replica.store_ref().sync_end();
     if !export.delta.changes.is_empty() {
         stats.sent = export.delta.changes.len();
         transport.send(export.delta).await?;
@@ -69,6 +88,24 @@ pub async fn sync_round<S: Storage, T: Transport>(
         let s = replica.import(&delta)?;
         stats.applied += s.applied;
         stats.skipped += s.skipped;
+        if let Some(offset) = delta.caught_up {
+            link.caught_up = Some((delta.generation, offset));
+        }
+    }
+
+    if let Some((generation, offset)) = link.caught_up {
+        let ack = Ack { offset, lamport };
+        if complete && link.last_ack != Some((generation, ack)) {
+            transport
+                .send(Delta {
+                    generation,
+                    changes: Vec::new(),
+                    caught_up: None,
+                    ack: Some(ack),
+                })
+                .await?;
+            link.last_ack = Some((generation, ack));
+        }
     }
     Ok(stats)
 }

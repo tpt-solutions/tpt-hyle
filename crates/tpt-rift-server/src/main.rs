@@ -2,14 +2,17 @@
 //!
 //! ```text
 //! tpt-rift-server serve <config.json>
+//! tpt-rift-server collect <config.json>     (server stopped)
 //! tpt-rift-server new-token
 //! tpt-rift-server hash-token <token>
 //! ```
+//!
+//! `serve` and `collect` read the store passphrase from `TPT_HUB_PASSPHRASE`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use tpt_rift_server::{hash_token, load_config, new_token, run};
+use tpt_rift_server::{collect_tombstones, hash_token, load_config, new_token, run};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -24,6 +27,30 @@ async fn main() -> ExitCode {
                 Err(e) => Err(Box::new(e)),
             },
             None => Err("usage: tpt-rift-server serve <config.json>".into()),
+        },
+        Some("collect") => match args.get(1) {
+            Some(path) => match load_config(&PathBuf::from(path)) {
+                Ok(config) => match std::env::var("TPT_HUB_PASSPHRASE") {
+                    Ok(pass) => collect_tombstones(&config, pass.as_bytes()).map(|c| {
+                        match c.bound {
+                            Some(b) => println!(
+                                "collected with bound offset {} lamport {}",
+                                b.offset, b.lamport
+                            ),
+                            None => println!(
+                                "nothing collected: not every client has acked the current generation"
+                            ),
+                        }
+                        println!(
+                            "generation {} -> {}",
+                            c.generations.0, c.generations.1
+                        );
+                    }),
+                    Err(_) => Err("set TPT_HUB_PASSPHRASE to the hub store passphrase".into()),
+                },
+                Err(e) => Err(Box::new(e)),
+            },
+            None => Err("usage: tpt-rift-server collect <config.json>".into()),
         },
         Some("new-token") => {
             let (token, hash) = new_token();

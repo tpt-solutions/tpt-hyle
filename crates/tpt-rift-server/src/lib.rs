@@ -14,9 +14,17 @@
 //! - A change from the client's own node whose key is outside its write
 //!   prefixes closes the connection.
 //! - Export to a client includes only keys it may read.
+//! - A client sends an ack after it has caught up with the hub. The hub keeps
+//!   the latest ack per client. Changes at or below the lowest clock acked by
+//!   every client are dropped, since those clients already hold them. See
+//!   [`collect_tombstones`].
 //!
 //! The server does not terminate TLS. Run it behind a TLS-terminating reverse
 //! proxy whenever it is reachable from outside a trusted network.
+
+mod acks;
+
+pub use acks::{acks_path, Acks, Bound, Entry, HubPosition};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,7 +37,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::Mutex;
 use tpt_hyle::{FileStorage, Hyle};
-use tpt_rift::{Delta, PeerLink, Replica, RiftError, Transport};
+use tpt_rift::{Delta, PeerCursor, PeerLink, Replica, RiftError, Transport};
 use tpt_rift_transport_ws::{accept_with, WebSocketTransport};
 
 /// Largest accepted message from a client, unless the config says otherwise.
@@ -102,6 +110,8 @@ pub struct TokenConfig {
 pub struct Auth {
     /// The node id this client writes under.
     pub node_id: u128,
+    /// The client's token hash, lowercase hex. Keys its acknowledgements.
+    pub key: String,
     read: Vec<Vec<u8>>,
     write: Vec<Vec<u8>>,
 }
@@ -134,15 +144,18 @@ impl std::error::Error for ConfigError {}
 #[derive(Debug, Clone)]
 pub struct Access {
     entries: Vec<([u8; 32], Auth)>,
+    acks: Arc<std::sync::Mutex<Acks>>,
 }
 
 impl Access {
     /// Builds the table. Checks that node ids are unique and distinct from the
-    /// hub's. Returns the hub node id along with the table.
+    /// hub's. Returns the hub node id along with the table. Acks are kept in
+    /// memory until [`Access::load_acks`] is called.
     pub fn from_config(config: &Config) -> Result<(u128, Self), ConfigError> {
         let hub = parse_u128(&config.node_id, "node_id")?;
         let mut seen = vec![hub];
         let mut entries = Vec::with_capacity(config.tokens.len());
+        let mut keys = Vec::with_capacity(config.tokens.len());
         for t in &config.tokens {
             let hash = parse_hash(&t.sha256)?;
             let node_id = parse_u128(&t.node_id, "tokens[].node_id")?;
@@ -152,14 +165,43 @@ impl Access {
                 )));
             }
             seen.push(node_id);
+            let key = t.sha256.to_ascii_lowercase();
+            keys.push(key.clone());
             let auth = Auth {
                 node_id,
+                key,
                 read: t.read.iter().map(|p| p.as_bytes().to_vec()).collect(),
                 write: t.write.iter().map(|p| p.as_bytes().to_vec()).collect(),
             };
             entries.push((hash, auth));
         }
-        Ok((hub, Self { entries }))
+        let acks = Acks::in_memory(keys);
+        Ok((
+            hub,
+            Self {
+                entries,
+                acks: Arc::new(std::sync::Mutex::new(acks)),
+            },
+        ))
+    }
+
+    /// Loads the acks saved at `path`, for the clients in this table. Later
+    /// acks are saved there too.
+    pub fn load_acks(&mut self, path: &Path) -> std::io::Result<()> {
+        let tokens = self.acks_lock().tokens().to_vec();
+        *self.acks_lock() = Acks::open(path, tokens)?;
+        Ok(())
+    }
+
+    /// The lowest position every client has acked in `generation`.
+    pub fn bound(&self, generation: u32) -> Option<Bound> {
+        self.acks_lock().bound(generation)
+    }
+
+    fn acks_lock(&self) -> std::sync::MutexGuard<'_, Acks> {
+        self.acks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Returns the permissions for `token`, or `None`. Every entry is compared,
@@ -193,6 +235,8 @@ pub fn screen_incoming(delta: Delta, auth: &Auth) -> Result<Delta, RiftError> {
     Ok(Delta {
         generation: delta.generation,
         changes: kept,
+        caught_up: None,
+        ack: None,
     })
 }
 
@@ -309,6 +353,9 @@ impl Bucket {
 }
 
 /// Serves one authenticated connection until it closes or breaks a rule.
+///
+/// Incoming deltas are handled in the order they arrive. Changes are imported,
+/// then an ack is recorded, so an ack never lands before the changes it covers.
 pub async fn serve_connection(
     conn: WebSocketTransport<TcpStream>,
     auth: Auth,
@@ -316,6 +363,7 @@ pub async fn serve_connection(
     registry: Registry,
     poll: Duration,
     messages_per_second: u32,
+    access: Access,
 ) -> Result<(), RiftError> {
     let mut budget = Bucket::new(messages_per_second);
     let (signal_tx, mut signals) = unbounded_channel::<String>();
@@ -332,6 +380,9 @@ pub async fn serve_connection(
         let hub = hub.lock().await;
         PeerLink::new(auth.node_id, &hub)
     };
+    // The last log end sent to this client as a caught-up mark, so each end
+    // is marked once.
+    let mut marked: Option<PeerCursor> = None;
     loop {
         while let Some(text) = conn.take_text()? {
             budget.spend()?;
@@ -343,9 +394,27 @@ pub async fn serve_connection(
 
         while let Some(delta) = conn.receive().await? {
             budget.spend()?;
-            let accepted = screen_incoming(delta, &auth)?;
+            let generation = delta.generation;
+            let ack = delta.ack;
+            let mut accepted = screen_incoming(delta, &auth)?;
+            let mut hub = hub.lock().await;
+            let position = HubPosition {
+                generation: hub.store_ref().generation(),
+                end: hub.store_ref().sync_end(),
+                lamport: hub.store_ref().lamport(),
+            };
+            // Changes at or below the lowest acked clock are already held by
+            // every client. A client that resends them is replaying them.
+            let floor = access.bound(position.generation).map_or(0, |b| b.lamport);
+            accepted.changes.retain(|c| c.lamport > floor);
             if !accepted.changes.is_empty() {
-                hub.lock().await.import(&accepted)?;
+                hub.import(&accepted)?;
+            }
+            if let Some(ack) = ack {
+                access
+                    .acks_lock()
+                    .record(&auth.key, position, generation, ack)
+                    .map_err(|_| RiftError::Protocol("could not save an acknowledgement"))?;
             }
         }
 
@@ -354,12 +423,13 @@ pub async fn serve_connection(
             match hub.export(auth.node_id, link.cursor, EXPORT_BATCH) {
                 Err(RiftError::StaleGeneration { .. }) => {
                     link.reset(&hub);
+                    marked = None;
                     None
                 }
-                other => Some(other?),
+                other => Some((other?, hub.store_ref().sync_end())),
             }
         };
-        if let Some(export) = export {
+        if let Some((export, end)) = export {
             link.cursor = export.next;
             let changes: Vec<_> = export
                 .delta
@@ -367,10 +437,21 @@ pub async fn serve_connection(
                 .into_iter()
                 .filter(|c| auth.can_read(&c.key))
                 .collect();
-            if !changes.is_empty() {
+            // Mark the log's end once, when this client has been sent all of
+            // it. The client acks the mark after it has applied the changes
+            // before it.
+            let caught_up = if export.next.offset == end && marked != Some(export.next) {
+                marked = Some(export.next);
+                Some(end)
+            } else {
+                None
+            };
+            if !changes.is_empty() || caught_up.is_some() {
                 conn.send(Delta {
                     generation: export.delta.generation,
                     changes,
+                    caught_up,
+                    ack: None,
                 })
                 .await?;
             }
@@ -382,7 +463,8 @@ pub async fn serve_connection(
 
 /// Runs the server until the listener fails.
 pub async fn run(config: Config, passphrase: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    let (hub_node, access) = Access::from_config(&config)?;
+    let (hub_node, mut access) = Access::from_config(&config)?;
+    access.load_acks(&acks_path(&config.store))?;
     let store = Hyle::open_file(&config.store, hub_node, passphrase)?;
     let hub: Hub = Arc::new(Mutex::new(Replica::new(store)));
     let listener = TcpListener::bind(&config.listen).await?;
@@ -399,6 +481,42 @@ pub async fn run(config: Config, passphrase: &[u8]) -> Result<(), Box<dyn std::e
     )
     .await;
     Ok(())
+}
+
+/// What [`collect_tombstones`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Collection {
+    /// The bound applied. `None` means not every configured client had acked
+    /// the current generation, so no tombstone was collected.
+    pub bound: Option<Bound>,
+    /// Generation before and after compaction.
+    pub generations: (u32, u32),
+}
+
+/// Compacts the hub's store file, dropping each tombstone that every configured
+/// client has acknowledged. Every value it supersedes is dropped too, as in
+/// ordinary compaction.
+///
+/// Run this while the server is stopped. It rewrites the store file.
+/// Compaction always starts a new generation, so clients resync from the
+/// start on their next connection, and acks from the old generation no longer
+/// count. The store is compacted even when nothing can be collected.
+pub fn collect_tombstones(
+    config: &Config,
+    passphrase: &[u8],
+) -> Result<Collection, Box<dyn std::error::Error>> {
+    let (hub_node, mut access) = Access::from_config(config)?;
+    access.load_acks(&acks_path(&config.store))?;
+    let store = Hyle::open_file(&config.store, hub_node, passphrase)?;
+    let before = store.generation();
+    let bound = access.bound(before);
+    let store = store.compact_file_collecting(&config.store, |end, lamport| {
+        bound.is_some_and(|b| end <= b.offset && lamport <= b.lamport)
+    })?;
+    Ok(Collection {
+        bound,
+        generations: (before, store.generation()),
+    })
 }
 
 /// Accepts connections on `listener` and serves each one on its own task.
@@ -472,7 +590,7 @@ async fn handle(
     let auth = granted.ok_or(RiftError::Protocol(
         "handshake accepted without credentials",
     ))?;
-    serve_connection(conn, auth, hub, registry, poll, messages_per_second).await
+    serve_connection(conn, auth, hub, registry, poll, messages_per_second, access).await
 }
 
 fn unauthorized() -> tokio_tungstenite::tungstenite::handshake::server::ErrorResponse {

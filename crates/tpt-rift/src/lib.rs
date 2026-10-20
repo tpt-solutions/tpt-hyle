@@ -23,4 +23,4 @@ pub use mock::MockTransport;
 pub use replica::{Export, ImportStats, PeerCursor, Replica};
 pub use sync::{sync_round, Backoff, PeerLink, RoundStats};
 pub use transport::Transport;
-pub use wire::{Change, Delta, MAGIC, MAX_CHANGES, WIRE_VERSION};
+pub use wire::{Ack, Change, Delta, MAGIC, MAX_CHANGES, WIRE_VERSION};

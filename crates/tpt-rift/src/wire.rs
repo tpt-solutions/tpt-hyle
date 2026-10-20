@@ -8,13 +8,18 @@ use crate::RiftError;
 /// Magic bytes at the start of every delta.
 pub const MAGIC: [u8; 4] = *b"RIFT";
 /// Version of this encoding.
-pub const WIRE_VERSION: u8 = 1;
+pub const WIRE_VERSION: u8 = 2;
 
 /// Fixed part of one change: lamport(8) node_id(16) flags(1) key_len(2)
 /// value_len(4).
 const CHANGE_HEADER_LEN: usize = 31;
-/// Fixed part of a delta: magic(4) version(1) generation(4) count(4).
-const DELTA_HEADER_LEN: usize = 13;
+/// Fixed part of a delta: magic(4) version(1) generation(4) count(4)
+/// control(1). Control fields follow, as the control bits say.
+const DELTA_HEADER_LEN: usize = 14;
+/// Control bit: a `caught_up` offset follows.
+const CONTROL_CAUGHT_UP: u8 = 0b01;
+/// Control bit: an `ack` follows.
+const CONTROL_ACK: u8 = 0b10;
 /// Upper bound on changes per delta, a guard against hostile counts.
 pub const MAX_CHANGES: u32 = 1 << 20;
 
@@ -36,6 +41,21 @@ pub struct Change {
     pub tombstone: bool,
 }
 
+/// A client's acknowledgement that it is caught up with the hub.
+///
+/// It means: every change this client wrote with a lamport at or below
+/// `lamport` is already on the hub, and the client has applied every hub change
+/// before `offset`. The hub uses acks to decide which tombstones are safe to
+/// collect. See `docs/adr/0014-tombstone-collection.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ack {
+    /// The hub log offset the client has applied through. It comes from the
+    /// hub's `caught_up` marker.
+    pub offset: u64,
+    /// The client's Lamport clock, read before its last complete export.
+    pub lamport: u64,
+}
+
 /// A batch of changes, with the generation of the log they came from.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Delta {
@@ -43,6 +63,10 @@ pub struct Delta {
     pub generation: u32,
     /// Changes, in the sender's log order.
     pub changes: Vec<Change>,
+    /// Set by the hub when it has sent everything in its log up to this offset.
+    pub caught_up: Option<u64>,
+    /// Set by a client to acknowledge a `caught_up` marker.
+    pub ack: Option<Ack>,
 }
 
 impl Delta {
@@ -50,6 +74,7 @@ impl Delta {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(
             DELTA_HEADER_LEN
+                + 16
                 + self
                     .changes
                     .iter()
@@ -60,6 +85,21 @@ impl Delta {
         out.push(WIRE_VERSION);
         out.extend_from_slice(&self.generation.to_le_bytes());
         out.extend_from_slice(&(self.changes.len() as u32).to_le_bytes());
+        let mut control = 0u8;
+        if self.caught_up.is_some() {
+            control |= CONTROL_CAUGHT_UP;
+        }
+        if self.ack.is_some() {
+            control |= CONTROL_ACK;
+        }
+        out.push(control);
+        if let Some(offset) = self.caught_up {
+            out.extend_from_slice(&offset.to_le_bytes());
+        }
+        if let Some(ack) = self.ack {
+            out.extend_from_slice(&ack.offset.to_le_bytes());
+            out.extend_from_slice(&ack.lamport.to_le_bytes());
+        }
         for c in &self.changes {
             out.extend_from_slice(&c.lamport.to_le_bytes());
             out.extend_from_slice(&c.node_id.to_le_bytes());
@@ -84,6 +124,23 @@ impl Delta {
         }
         let generation = r.u32()?;
         let count = r.u32()?;
+        let control = r.u8()?;
+        if control & !(CONTROL_CAUGHT_UP | CONTROL_ACK) != 0 {
+            return Err(RiftError::Protocol("unknown control bits"));
+        }
+        let caught_up = if control & CONTROL_CAUGHT_UP != 0 {
+            Some(r.u64()?)
+        } else {
+            None
+        };
+        let ack = if control & CONTROL_ACK != 0 {
+            Some(Ack {
+                offset: r.u64()?,
+                lamport: r.u64()?,
+            })
+        } else {
+            None
+        };
         if count > MAX_CHANGES {
             return Err(RiftError::Protocol("too many changes in one delta"));
         }
@@ -126,6 +183,8 @@ impl Delta {
         Ok(Delta {
             generation,
             changes,
+            caught_up,
+            ack,
         })
     }
 }
@@ -200,6 +259,8 @@ mod tests {
                     tombstone: true,
                 },
             ],
+            caught_up: None,
+            ack: None,
         }
     }
 
@@ -209,6 +270,49 @@ mod tests {
         assert_eq!(Delta::decode(&d.encode()).unwrap(), d);
         let empty = Delta::default();
         assert_eq!(Delta::decode(&empty.encode()).unwrap(), empty);
+    }
+
+    #[test]
+    fn round_trips_marker_and_ack() {
+        let marked = Delta {
+            caught_up: Some(4096),
+            ..sample()
+        };
+        assert_eq!(Delta::decode(&marked.encode()).unwrap(), marked);
+
+        let acked = Delta {
+            changes: vec![],
+            ack: Some(Ack {
+                offset: 4096,
+                lamport: 77,
+            }),
+            ..sample()
+        };
+        assert_eq!(Delta::decode(&acked.encode()).unwrap(), acked);
+
+        let both = Delta {
+            caught_up: Some(1),
+            ack: Some(Ack {
+                offset: 2,
+                lamport: 3,
+            }),
+            ..sample()
+        };
+        assert_eq!(Delta::decode(&both.encode()).unwrap(), both);
+    }
+
+    #[test]
+    fn rejects_unknown_control_bits() {
+        let mut bytes = sample().encode();
+        bytes[13] |= 0b1000;
+        assert!(Delta::decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn version_one_is_refused() {
+        let mut bytes = sample().encode();
+        bytes[4] = 1;
+        assert!(Delta::decode(&bytes).is_err());
     }
 
     #[test]

@@ -75,14 +75,31 @@ you do not fully control:
   client that exceeds it is disconnected. Its reconnect logic then backs off.
 - **Fan-out.** Each connection polls the hub every `poll_ms` for changes it
   has not sent yet. Clients converge without any extra coordination.
+- **Acks.** When a client has caught up, the hub sends it a marker, and the
+  client acks it. The hub saves the latest ack per client in `<store>.acks`.
+  Once every configured client has acked, the hub refuses replayed changes at
+  or below the lowest acked clock. See [ADR 0014](adr/0014-tombstone-collection.md).
+
+## Collecting tombstones
+
+    tpt-rift-server collect server.json
+
+Run this with the server stopped, and with `TPT_HUB_PASSPHRASE` set. It drops
+every tombstone that all configured clients have acked, and every value those
+tombstones superseded. It rewrites the store file and starts a new generation,
+so clients do a full resync on their next connection.
+
+If any configured client has never acked in the current generation, nothing is
+collected. The store is still compacted. A client that is gone for good must be
+removed from the config first, and its unpushed writes are then lost.
 
 ## Not yet built
 
 
 - Per-token revocation. Remove the entry from the config and restart.
 - Hot reload of the config. A restart is required.
-- Compaction on a running hub. Stop the server, compact the store offline with
-  the CLI, then start it again.
+- Compaction on a running hub. Stop the server, run `collect` or the CLI
+  `compact`, then start it again.
 
 ## Container image
 

@@ -413,6 +413,20 @@ impl<S: Storage> Hyle<S> {
         storage: S2,
         session: [u8; SESSION_LEN],
     ) -> Result<Hyle<S2>, Error> {
+        self.compact_into_collecting(storage, session, |_, _| false)
+    }
+
+    /// Like [`Hyle::compact_into`], but also drops the latest tombstone of each
+    /// key for which `collectable` returns `true`. The closure receives the
+    /// tombstone's end offset in this log and its lamport. Dropping a tombstone
+    /// lets an older value of the key come back if a stale copy of it is
+    /// written later, so only the caller can say when that cannot happen.
+    pub fn compact_into_collecting<S2: Storage>(
+        &mut self,
+        storage: S2,
+        session: [u8; SESSION_LEN],
+        collectable: impl Fn(u64, u64) -> bool,
+    ) -> Result<Hyle<S2>, Error> {
         if self.failed {
             return Err(Error::Poisoned);
         }
@@ -424,16 +438,14 @@ impl<S: Storage> Hyle<S> {
             .checked_add(1)
             .ok_or(Error::Corrupt("generation counter exhausted"))?;
 
-        let events: Vec<ChangeEvent> = self
-            .events_since(HEADER_LEN)?
-            .map(|item| item.map(|(_, ev)| ev))
-            .collect::<Result<_, _>>()?;
+        let events: Vec<(u64, ChangeEvent)> =
+            self.events_since(HEADER_LEN)?.collect::<Result<_, _>>()?;
 
         // Pass 1: each key's last event. Every frame is verified here, so the
         // copy cannot carry damage forward.
         let mut keys: Vec<Vec<u8>> = Vec::with_capacity(events.len());
         let mut latest: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
-        for (i, ev) in events.iter().enumerate() {
+        for (i, (_, ev)) in events.iter().enumerate() {
             let (fields, plain) = self.data_at(ev.payload_offset)?;
             let key = plain[DATA_FIXED_LEN..][..fields.key_len as usize].to_vec();
             latest.insert(key.clone(), i);
@@ -450,8 +462,11 @@ impl<S: Storage> Hyle<S> {
         )?;
         target.observe_lamport(self.lamport);
         let mut batch = target.batch()?;
-        for (i, ev) in events.iter().enumerate() {
+        for (i, (end, ev)) in events.iter().enumerate() {
             if latest.get(&keys[i]) != Some(&i) {
+                continue;
+            }
+            if ev.tombstone && collectable(*end, ev.lamport) {
                 continue;
             }
             let (fields, plain) = self.data_at(ev.payload_offset)?;
@@ -988,6 +1003,16 @@ impl Hyle<FileStorage> {
     /// `<path>.tmp` is removed on the next compaction. A rename is atomic, so a
     /// crash after it leaves the new file.
     pub fn compact_file(self, path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
+        self.compact_file_collecting(path, |_, _| false)
+    }
+
+    /// File version of [`Hyle::compact_into_collecting`]. Writes to a temporary
+    /// file and renames it over `path`, so a crash leaves one complete file.
+    pub fn compact_file_collecting(
+        self,
+        path: impl AsRef<std::path::Path>,
+        collectable: impl Fn(u64, u64) -> bool,
+    ) -> Result<Self, Error> {
         let path = path.as_ref();
         let node_id = self.node_id;
         let key = self.key;
@@ -997,7 +1022,7 @@ impl Hyle<FileStorage> {
         let mut old = self;
         {
             let storage = FileStorage::create(&tmp)?;
-            let _new = old.compact_into(storage, session)?;
+            let _new = old.compact_into_collecting(storage, session, collectable)?;
         }
         drop(old);
 

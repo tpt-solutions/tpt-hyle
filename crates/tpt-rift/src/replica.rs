@@ -99,6 +99,10 @@ impl<S: Storage> Replica<S> {
             .take(max_events)
             .collect::<Result<_, _>>()?;
 
+        // Fewer events than asked for means the log is exhausted. The cursor then
+        // moves to the true end, past any trailing commit frames, which carry no
+        // events. A caught-up check compares against that end.
+        let exhausted = events.len() < max_events;
         let mut next = cursor.offset;
         let mut changes = Vec::new();
         for (end, ev) in events {
@@ -117,12 +121,17 @@ impl<S: Storage> Replica<S> {
                 tombstone: ev.tombstone,
             });
         }
+        if exhausted {
+            next = self.store.sync_end();
+        }
         debug_assert!(next >= cursor.offset);
 
         Ok(Export {
             delta: Delta {
                 generation: current,
                 changes,
+                caught_up: None,
+                ack: None,
             },
             next: PeerCursor {
                 generation: current,

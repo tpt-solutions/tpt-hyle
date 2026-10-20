@@ -1,10 +1,13 @@
-# Wire format: deltas (version 1)
+# Wire format: deltas (version 2)
 
 A **delta** is what one replica sends another. It carries the changes that
-peer has not yet seen, with their keys and values. Offsets are not sent,
-because an offset is only meaningful inside the log that produced it.
+peer has not yet seen, with their keys and values, and, optionally, the two
+control fields that tombstone collection uses. Offsets are not sent for
+changes, because an offset is only meaningful inside the log that produced it.
+The control fields carry hub log offsets, and say what they refer to.
 
-The reference implementation is `crates/tpt-rift/src/wire.rs`.
+The reference implementation is `crates/tpt-rift/src/wire.rs`. The protocol
+built on it is in [ADR 0014](adr/0014-tombstone-collection.md).
 
 ## Conventions
 
@@ -17,10 +20,13 @@ The reference implementation is `crates/tpt-rift/src/wire.rs`.
 | Offset | Size | Field        | Notes                                        |
 |--------|------|--------------|----------------------------------------------|
 | 0      | 4    | magic        | `RIFT`                                       |
-| 4      | 1    | version      | `1`                                          |
+| 4      | 1    | version      | `2`                                          |
 | 5      | 4    | generation   | Generation of the sender's log at export     |
 | 9      | 4    | count        | Number of changes. At most `1 << 20`         |
-| 13     | ...  | changes      | `count` entries, in the sender's log order   |
+| 13     | 1    | control      | Bit 0: `caught_up` present. Bit 1: `ack` present. Other bits must be `0` |
+| 14     | 8    | caught_up    | Only if control bit 0. Hub log offset       |
+| …      | 16   | ack          | Only if control bit 1: `offset` (8), `lamport` (8) |
+| …      | ...  | changes      | `count` entries, in the sender's log order   |
 
 Each change:
 
@@ -34,6 +40,19 @@ Each change:
 | key_len   | key        |                                                    |
 | value_len | value      |                                                    |
 
+## Control fields
+
+- **`caught_up`** is sent by the hub. It says that the hub has sent this client
+  every change in its log up to that offset, in the delta's generation.
+- **`ack`** is sent by a client. It says that the client has applied the hub
+  up to the `caught_up` offset it last received, and has pushed every write it
+  made with a lamport at or below `ack.lamport`. The client reads
+  `ack.lamport` before its export, and sends the ack only after an export that
+  reached the end of its log.
+
+A delta may carry changes and a control field together. The receiver applies
+the changes first, then the control field.
+
 ## Rules
 
 A decoder rejects a delta that has:
@@ -42,7 +61,8 @@ A decoder rejects a delta that has:
 - a `count` larger than `1 << 20`, or one that cannot fit in the bytes that
   remain. This is checked before any allocation,
 - truncated content, or trailing bytes after the last change,
-- unknown flag bits, an empty key, or a tombstone with a value.
+- unknown control bits, unknown flag bits, an empty key, or a tombstone with a
+  value.
 
 ## Semantics
 
@@ -50,11 +70,12 @@ Receivers apply changes with last-writer-wins by `(lamport, node_id)`. See
 [ADR 0004](adr/0004-replication-semantics.md). Deltas may be lost, delayed,
 duplicated, or reordered. Importing the same delta twice has no effect.
 
-The `generation` field is informational. Cursors are tracked by the sender
-per peer, not by the receiver.
+The `generation` field is informational for changes. Cursors are tracked by the
+sender per peer, not by the receiver. For `caught_up` and `ack`, the generation
+is what they refer to, and a receiver ignores them if it is in another one.
 
 ## Versioning
 
 Any change to the bytes above bumps `WIRE_VERSION`. Receivers reject versions
-they do not know. There is no negotiation yet. That belongs with the Phase 3
-transports.
+they do not know. Version 1 is not accepted by version 2 code, and there is no
+negotiation. Peers must be upgraded together.

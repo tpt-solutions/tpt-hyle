@@ -67,6 +67,53 @@ fn compaction_keeps_original_node_ids() {
 }
 
 #[test]
+fn collectable_tombstones_are_dropped_and_others_kept() {
+    let mut db = fresh();
+    db.put(b"a", b"one").unwrap();
+    db.delete(b"a").unwrap();
+    // Everything up to here is before b's tombstone, so a's tombstone ends
+    // at or below this offset and b's ends above it.
+    let cut = db.sync_end();
+    db.put(b"b", b"two").unwrap();
+    db.delete(b"b").unwrap();
+
+    let mut compacted = db
+        .compact_into_collecting(VecStorage::new(), [2; 16], |end, _| end <= cut)
+        .unwrap();
+
+    assert_eq!(read(&mut compacted, b"a"), None);
+    assert_eq!(read(&mut compacted, b"b"), None);
+    let feed: Vec<_> = compacted
+        .events_since(HEADER_LEN)
+        .unwrap()
+        .map(|r| r.unwrap().1)
+        .collect();
+    assert_eq!(feed.len(), 1, "only b's tombstone is kept");
+    assert!(feed[0].tombstone);
+    assert_eq!(feed[0].lamport, 4, "b's tombstone is the last write");
+}
+
+#[test]
+fn collecting_nothing_matches_plain_compaction() {
+    let mut db = fresh();
+    db.put(b"a", b"1").unwrap();
+    db.delete(b"a").unwrap();
+    let mut compacted = db
+        .compact_into_collecting(VecStorage::new(), [2; 16], |_, _| false)
+        .unwrap();
+    let feed: Vec<_> = compacted
+        .events_since(HEADER_LEN)
+        .unwrap()
+        .map(|r| r.unwrap().1)
+        .collect();
+    assert_eq!(
+        feed.len(),
+        1,
+        "a's tombstone is kept when nothing is collectable"
+    );
+}
+
+#[test]
 fn compaction_refuses_non_empty_target() {
     let mut db = fresh();
     db.put(b"k", b"v").unwrap();

@@ -102,8 +102,8 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 
 ## Open questions
 
-- [ ] Security model: encryption at rest? signed events? (spec is silent; CRC-32C detects corruption, not tampering. See [SECURITY.md](SECURITY.md))
+- [ ] Security model: encryption at rest done (format v3, [ADR 0013](docs/adr/0013-encryption-and-single-file.md)). Signed events open: a token holder can still write as its node and lie in its acks (spec is silent; CRC-32C detects corruption, not tampering. See [SECURITY.md](SECURITY.md))
 - [ ] Schema/versioning and migration story
 - [ ] Is "100% formal verification" realistic with serde in the path? Scope proofs to the no_alloc core.
 - [ ] Spec's `LWW-ES` vs JSON CRDT selection: per-key type tag or per-namespace?
-- [ ] Deletion/tombstone GC across peers
+- [x] Deletion/tombstone GC across peers. Clients ack the hub's log position and clock; `tpt-rift-server collect` drops tombstones every configured client has acked. A client that never connects blocks collection. See [ADR 0014](docs/adr/0014-tombstone-collection.md)
