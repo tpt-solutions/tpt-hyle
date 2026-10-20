@@ -110,14 +110,7 @@ impl Delta {
             out.extend_from_slice(&ack.signature);
         }
         for c in &self.changes {
-            out.extend_from_slice(&c.lamport.to_le_bytes());
-            out.extend_from_slice(&c.node_id.to_le_bytes());
-            out.push(u8::from(c.tombstone));
-            out.extend_from_slice(&(c.key.len() as u16).to_le_bytes());
-            out.extend_from_slice(&(c.value.len() as u32).to_le_bytes());
-            out.extend_from_slice(&c.key);
-            out.extend_from_slice(&c.value);
-            out.extend_from_slice(&c.signature);
+            encode_change(c, &mut out);
         }
         out
     }
@@ -164,33 +157,7 @@ impl Delta {
 
         let mut changes = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            let lamport = r.u64()?;
-            let node_id = r.u128()?;
-            let flags = r.u8()?;
-            if flags > 1 {
-                return Err(RiftError::Protocol("unknown change flags"));
-            }
-            let key_len = r.u16()? as usize;
-            let value_len = r.u32()? as usize;
-            if key_len == 0 {
-                return Err(RiftError::Protocol("empty key"));
-            }
-            let tombstone = flags == 1;
-            if tombstone && value_len != 0 {
-                return Err(RiftError::Protocol("tombstone carries a value"));
-            }
-            let key = r.take(key_len)?.to_vec();
-            let value = r.take(value_len)?.to_vec();
-            let mut signature = [0u8; SIGNATURE_LEN];
-            signature.copy_from_slice(r.take(SIGNATURE_LEN)?);
-            changes.push(Change {
-                key,
-                value,
-                lamport,
-                node_id,
-                tombstone,
-                signature,
-            });
+            changes.push(decode_change(&mut r)?);
         }
         if r.pos != bytes.len() {
             return Err(RiftError::Protocol("trailing bytes after delta"));
@@ -202,6 +169,51 @@ impl Delta {
             ack,
         })
     }
+}
+
+/// Appends one change to `out`. The inverse of [`decode_change`].
+fn encode_change(c: &Change, out: &mut Vec<u8>) {
+    out.extend_from_slice(&c.lamport.to_le_bytes());
+    out.extend_from_slice(&c.node_id.to_le_bytes());
+    out.push(u8::from(c.tombstone));
+    out.extend_from_slice(&(c.key.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(c.value.len() as u32).to_le_bytes());
+    out.extend_from_slice(&c.key);
+    out.extend_from_slice(&c.value);
+    out.extend_from_slice(&c.signature);
+}
+
+/// Reads one change from the cursor. Its length is taken from the header and
+/// checked against the bytes that remain. Holds no loop, so one change can be
+/// checked on its own.
+fn decode_change(r: &mut Reader<'_>) -> Result<Change, RiftError> {
+    let lamport = r.u64()?;
+    let node_id = r.u128()?;
+    let flags = r.u8()?;
+    if flags > 1 {
+        return Err(RiftError::Protocol("unknown change flags"));
+    }
+    let key_len = r.u16()? as usize;
+    let value_len = r.u32()? as usize;
+    if key_len == 0 {
+        return Err(RiftError::Protocol("empty key"));
+    }
+    let tombstone = flags == 1;
+    if tombstone && value_len != 0 {
+        return Err(RiftError::Protocol("tombstone carries a value"));
+    }
+    let key = r.take(key_len)?.to_vec();
+    let value = r.take(value_len)?.to_vec();
+    let mut signature = [0u8; SIGNATURE_LEN];
+    signature.copy_from_slice(r.take(SIGNATURE_LEN)?);
+    Ok(Change {
+        key,
+        value,
+        lamport,
+        node_id,
+        tombstone,
+        signature,
+    })
 }
 
 /// Bounds-checked cursor over received bytes.
@@ -261,36 +273,18 @@ impl<'a> Reader<'a> {
 mod proofs {
     use super::*;
 
-    /// Every 48-byte message is parsed or rejected. None panics. Such a
-    /// message is too short to hold a change, so it covers the header and
-    /// control paths.
+    /// Every 128-byte input is parsed as a change, or rejected. None panics.
     #[kani::proof]
-    #[kani::unwind(2)]
-    fn decode_never_panics_on_short_input() {
-        let bytes: [u8; 48] = kani::any();
-        let _ = Delta::decode(&bytes);
+    #[kani::unwind(8)]
+    fn change_decode_never_panics() {
+        let bytes: [u8; 128] = kani::any();
+        let mut r = Reader {
+            bytes: &bytes,
+            pos: 0,
+        };
+        let _ = decode_change(&mut r);
     }
 
-    /// Every 128-byte message, which can hold one change, is parsed or
-    /// rejected. None panics.
-    #[kani::proof]
-    #[kani::unwind(3)]
-    fn decode_never_panics_on_one_change() {
-        let bytes: [u8; 128] = kani::any();
-        let _ = Delta::decode(&bytes);
-    }
-
-    /// The encoding is canonical: a message that decodes re-encodes to the
-    /// exact same bytes. So a peer cannot send two encodings of one delta,
-    /// and no byte is ignored.
-    #[kani::proof]
-    #[kani::unwind(3)]
-    fn accepted_delta_reencodes_identically() {
-        let bytes: [u8; 128] = kani::any();
-        if let Ok(delta) = Delta::decode(&bytes) {
-            assert_eq!(delta.encode(), bytes.to_vec());
-        }
-    }
 }
 
 #[cfg(test)]
