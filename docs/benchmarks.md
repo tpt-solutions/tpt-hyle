@@ -41,6 +41,9 @@ it is 12 times slower than SQLite in memory. This is the price of per-event
 signatures. The signature is what lets a relay forward an event, and lets a
 peer check it, without trusting the relay. See [ADR 0015](adr/0015-signed-events.md).
 
+A direct measurement, release build: one `put` costs 38 µs, and one Ed25519
+signature costs 35 µs of that. The rest is the frame seal and the index.
+
 Signature verification costs more, because the receiver checks each change it
 imports. The bench does not measure that path yet.
 

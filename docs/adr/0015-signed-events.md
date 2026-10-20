@@ -60,6 +60,26 @@ wire change carries the same signature. The format is in
   The hub refuses an ack that does not verify. This stops one client forging
   another's ack. It does not stop a client lying about its own state.
 
+## Decision on write cost
+
+Measured on the bench machine, a release build spends about 35 µs of each
+38 µs in-memory write on the signature. Durable writes are bound by fsync and
+are not affected.
+
+We keep per-event signatures on every store, and do not add an unsigned mode.
+An unsigned store could not later join a sync network without re-signing its
+history, and a relayed event needs its origin's signature. The cost is the
+price of that. If in-memory write rate becomes a real bottleneck, the next step
+is to measure the workload first, not to drop signing.
+
+## Decision on passphrase holders
+
+Anyone who can open a store can sign as its node, because the node key is
+derived from the store key. We keep that, and do not add a separate key store.
+A separate key would be one more secret to protect and to back up, and it would
+still need the same passphrase to unlock it. What the signature proves is which
+store wrote an event. That is the claim the format makes, and the docs state it.
+
 ## Alternatives rejected
 
 - **Random per-node keys stored in the file.** Simpler to rotate, but the file
