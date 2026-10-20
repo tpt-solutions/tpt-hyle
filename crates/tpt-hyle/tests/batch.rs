@@ -99,3 +99,33 @@ fn live_entries_returns_latest_live_values_under_a_prefix() {
     assert_eq!(entries, vec![(b"doc/a".to_vec(), b"3".to_vec())]);
     assert_eq!(db.live_entries(b"").unwrap().len(), 2);
 }
+
+#[test]
+fn index_is_rebuilt_on_reopen_and_serves_many_updates() {
+    let mut db = fresh();
+    for round in 0..50u32 {
+        db.put(b"hot", &round.to_le_bytes()).unwrap();
+        db.put(format!("cold-{round}").as_bytes(), b"x").unwrap();
+    }
+    let (state, sync) = db.into_parts();
+    let mut db = Hyle::open(state, sync, NODE).unwrap();
+    let mut buf = [0u8; 8];
+    assert_eq!(db.get(b"hot", &mut buf).unwrap(), Some(4));
+    assert_eq!(u32::from_le_bytes(buf[..4].try_into().unwrap()), 49);
+    for round in 0..50u32 {
+        assert!(db.contains_key(format!("cold-{round}").as_bytes()).unwrap());
+    }
+}
+
+#[test]
+fn reads_refuse_on_a_poisoned_store() {
+    let mut db = Hyle::open(
+        tpt_hyle::FixedStorage::<64>::new(),
+        tpt_hyle::FixedStorage::<1024>::new(),
+        NODE,
+    )
+    .unwrap();
+    assert!(db.put(b"k", &[0u8; 128]).is_err());
+    let mut buf = [0u8; 8];
+    assert!(matches!(db.get(b"k", &mut buf), Err(Error::Poisoned)));
+}

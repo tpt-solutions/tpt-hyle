@@ -39,7 +39,7 @@ On-disk format: [docs/format.md](docs/format.md). Design decisions: [docs/adr/](
 - [x] Batched commits with commit-marker records: a batch is durable only when its commit record is. Recovery drops an uncommitted tail whole and refuses damage in committed data ([ADR 0005](docs/adr/0005-batched-commits.md))
 - [x] Batch rollback: dropping an uncommitted batch truncates both segments back to where it started
 - [x] `put` / `get` / `delete` (tombstones)
-- [ ] Key index (hash -> offset). Deferred by [ADR 0002](docs/adr/0002-integrity-and-indexing.md): `get` is a reverse scan of the sync log until benchmarks justify an index
+- [x] Key index (hash -> sync offsets, `alloc` only). Built once the benchmark showed linear reads: at 50k keys a get took 4.4 ms, now 1.0 us. Rebuilt on open, retracted on batch rollback. Without `alloc`, lookups still scan ([ADR 0008](docs/adr/0008-key-index.md))
 - [x] Hash-collision handling for `key_hash: u64` (full-key compare)
 - [x] Sequential Sync Segment reader from offset (`events_since`)
 - [x] Lamport clock + node_id management

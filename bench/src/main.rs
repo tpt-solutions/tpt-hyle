@@ -103,6 +103,10 @@ fn main() {
     println!("\nfile ratio, tpt-hyle / SQLite throughput: {:.2}x", sf / hf);
     println!();
     batched_report(&dir, file_n);
+    println!();
+    for n in [1_000, 10_000, 50_000] {
+        read_scan(n, 200);
+    }
 }
 
 /// Same workload, but `batch` writes per durable commit.
@@ -159,5 +163,25 @@ fn batched_report(dir: &Path, n: usize) {
         "SQLite, file, transactions of 100",
         n,
         sqlite_file_batched(dir, n, batch),
+    );
+}
+
+/// Read cost against log length: time `gets` lookups of existing keys.
+pub fn read_scan(n: usize, gets: usize) {
+    use tpt_hyle::{Hyle, VecStorage};
+    let mut db = Hyle::open(VecStorage::new(), VecStorage::new(), 1).unwrap();
+    for i in 0..n {
+        db.put(&key(i), &value(i)).unwrap();
+    }
+    let mut buf = [0u8; 256];
+    let start = Instant::now();
+    for g in 0..gets {
+        let i = (g.wrapping_mul(2654435761)) % n;
+        db.get(&key(i), &mut buf).unwrap();
+    }
+    let secs = start.elapsed().as_secs_f64();
+    println!(
+        "get, {n:>7} keys in log: {:>9.1} us per get",
+        secs * 1e6 / gets as f64
     );
 }

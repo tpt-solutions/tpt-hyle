@@ -51,6 +51,10 @@ pub struct Hyle<St, Sy> {
     generation: u32,
     lamport: u64,
     failed: bool,
+    /// Sync offsets of data records, per key hash, oldest first. Rebuilt on
+    /// open. Only present with `alloc`. Without it, lookups scan the log.
+    #[cfg(feature = "alloc")]
+    index: BTreeMap<u64, Vec<u64>>,
 }
 
 /// A group of writes that commits or disappears together.
@@ -111,6 +115,8 @@ impl<St: Storage, Sy: Storage> Hyle<St, Sy> {
             generation: sync_gen,
             lamport: 0,
             failed: false,
+            #[cfg(feature = "alloc")]
+            index: BTreeMap::new(),
         };
         store.lamport = store.recover()?;
         Ok(store)
@@ -353,6 +359,9 @@ impl<St: Storage, Sy: Storage> Hyle<St, Sy> {
     /// latest event decides whether it is live.
     #[cfg(feature = "alloc")]
     pub fn live_entries(&mut self, prefix: &[u8]) -> Result<Vec<KeyValue>, Error> {
+        if self.failed {
+            return Err(Error::Poisoned);
+        }
         let events: Vec<ChangeEvent> = self
             .events_since(HEADER_LEN)?
             .map(|item| item.map(|(_, ev)| ev))
@@ -456,9 +465,30 @@ impl<St: Storage, Sy: Storage> Hyle<St, Sy> {
             payload_len: value_len,
             tombstone,
         };
-        self.sync.append(&ev.encode())?;
+        let offset = self.sync.append(&ev.encode())?;
+        self.index_add(ev.key_hash, offset);
         Ok(ev)
     }
+
+    #[cfg(feature = "alloc")]
+    fn index_add(&mut self, key_hash: u64, offset: u64) {
+        self.index.entry(key_hash).or_default().push(offset);
+    }
+
+    #[cfg(not(feature = "alloc"))]
+    fn index_add(&mut self, _key_hash: u64, _offset: u64) {}
+
+    /// Forgets entries at or after `from`. Used when a batch rolls back.
+    #[cfg(feature = "alloc")]
+    fn index_retract(&mut self, from: u64) {
+        self.index.retain(|_, offsets| {
+            offsets.retain(|&o| o < from);
+            !offsets.is_empty()
+        });
+    }
+
+    #[cfg(not(feature = "alloc"))]
+    fn index_retract(&mut self, _from: u64) {}
 
     /// Makes a batch durable. The order is state records, then sync records,
     /// then the commit record, with a flush between each step. A commit
@@ -480,8 +510,40 @@ impl<St: Storage, Sy: Storage> Hyle<St, Sy> {
         Ok(())
     }
 
-    /// Scans the sync log newest-first for the latest event on `key`.
+    /// The latest event on `key`, including writes made earlier in the
+    /// current batch. Refuses on a poisoned store, because a failed commit
+    /// can leave records that a reopen would discard.
     fn find(&mut self, key: &[u8]) -> Result<Option<ChangeEvent>, Error> {
+        if self.failed {
+            return Err(Error::Poisoned);
+        }
+        self.find_latest(key)
+    }
+
+    /// Looks up the latest event through the key index. Each candidate is
+    /// checked against the full key, so a hash collision cannot return the
+    /// wrong value.
+    #[cfg(feature = "alloc")]
+    fn find_latest(&mut self, key: &[u8]) -> Result<Option<ChangeEvent>, Error> {
+        let key_hash = fnv1a(key);
+        let count = self.index.get(&key_hash).map_or(0, Vec::len);
+        for i in (0..count).rev() {
+            let Some(&offset) = self.index.get(&key_hash).and_then(|v| v.get(i)) else {
+                break;
+            };
+            if let Record::Data(ev) = self.read_record_at(offset)? {
+                if ev.key_len as usize == key.len() && self.matches_key(&ev, key)? {
+                    return Ok(Some(ev));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Scans the sync log newest-first. Used without `alloc`, where there is
+    /// no index.
+    #[cfg(not(feature = "alloc"))]
+    fn find_latest(&mut self, key: &[u8]) -> Result<Option<ChangeEvent>, Error> {
         let key_hash = fnv1a(key);
         let count = self.sync.len().saturating_sub(HEADER_LEN) / REC;
         for i in (0..count).rev() {
@@ -618,6 +680,7 @@ impl<St: Storage, Sy: Storage> Hyle<St, Sy> {
                         + u64::from(ev.payload_len);
                     valid_state = max(valid_state, end);
                     max_lamport = max(max_lamport, ev.lamport);
+                    self.index_add(ev.key_hash, offset);
                 }
                 Some(Record::Commit { lamport, .. }) => {
                     max_lamport = max(max_lamport, lamport);
@@ -774,6 +837,7 @@ impl<St: Storage, Sy: Storage> Drop for Batch<'_, St, Sy> {
         let sync_ok = self.store.sync.truncate(self.start_sync).is_ok();
         if state_ok && sync_ok {
             self.store.lamport = self.start_lamport;
+            self.store.index_retract(self.start_sync);
         } else {
             self.store.failed = true;
         }
